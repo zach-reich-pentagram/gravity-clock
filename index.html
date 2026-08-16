@@ -4,7 +4,15 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Gravity Clock</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext x='16' y='25' font-size='26' text-anchor='middle'%3E%E2%8F%B1%3C/text%3E%3C/svg%3E" />
+<link rel="icon" type="image/png" href="favicon.png" />
+
+<!-- convex decomposition for concave physics bodies -->
+<script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
+
+<!-- p5.js and Matter.js CDNs -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+
 <style>
   :root {
     --ink: #000;
@@ -72,8 +80,8 @@
   .credit:hover { text-decoration: underline; }
 
   /* ---------- stage ---------- */
-  .stage { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 22px; min-width: 0; min-height: 0; }
-  #cv { border: 1px solid var(--hair); display: block; }
+  #canvas-container { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 22px; min-width: 0; min-height: 0; }
+  #canvas-container canvas { border: 1px solid var(--hair); display: block; }
 
   @media (max-width: 720px) {
     .body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
@@ -87,7 +95,7 @@
   <div class="topbar">
     <div class="wordmark" id="title">Gravity Clock</div>
     <div class="spacer"></div>
-    <div class="readout" id="readout">00:00:00:0:0:0</div>
+    <div class="readout" id="readout">00:00:00:0</div>
   </div>
 
   <div class="body">
@@ -104,7 +112,7 @@
       <section class="panel">
         <div class="phead">Aspect ratio</div>
         <div class="selwrap">
-          <select class="field" id="aspect">
+          <select class="field" id="aspectRatioSelect">
             <option value="16:9" selected>16:9 — Horizontal</option>
             <option value="9:16">9:16 — Vertical</option>
             <option value="1:1">1:1 — Square</option>
@@ -128,504 +136,978 @@
       <a class="credit" href="https://zachreich.com" target="_blank" rel="noopener">©Zach Reich, 2026</a>
     </aside>
 
-    <!-- ============ stage ============ -->
-    <main class="stage" id="stage">
-      <canvas id="cv"></canvas>
-    </main>
+    <!-- ============ stage / p5 render canvas ============ -->
+    <main id="canvas-container"></main>
 
   </div>
 </div>
 
 <script>
-(function () {
-  "use strict";
+    let Engine = Matter.Engine,
+        Composite = Matter.Composite,
+        Bodies = Matter.Bodies,
+        Body = Matter.Body;
 
-  /* ================= configuration ================= */
+    let engine, world;
+    let numbers = [];
+    let floorBody, wallLeft, wallRight;
 
-  var GRAVITY = 3.0;                 // default gravity
-  var FILL = 0.92;                   // fraction of canvas area the pile reaches by the end of a minute
-  var CATCHUP_MS = 800;              // events older than this settle instantly instead of animating
+    // ---------- fixed settings (public site: no sliders) ----------
+    const GRAVITY = 3.0;
+    const BOUNCE = 0.2;
+    const TENTHS_PCT = 1;    // % of canvas height
+    const SECONDS_PCT = 5;   // % of canvas height
+    const BIG_RATIO = 25 / 40;  // minute size relative to hour size
+    const FILL = 0.95;       // area budget vs canvas; real piles pack with voids, so this crests near the top
 
-  // Piece sizes as a fraction of sqrt(canvas area).
-  // Seconds 5%, tenths 1%; hundredths and thousandths smaller still.
-  var REL = { sec: 0.05, tenth: 0.01, hund: 0.0045, thou: 0.0032 };
+    // Clock state, synced to the selected city's real time
+    let simHour = 0;
+    let simMinute = 0;
+    let simSecond = 0;
+    let simTick = 0;         // tenths elapsed within the current minute (0..599)
+    let started = false;
 
-  // Thousandths are batched (one piece per 4 ms) so the simulation never
-  // has to spawn 1000 pieces per second; settled pieces are stamped onto an
-  // offscreen pile canvas so only airborne pieces are ever simulated/drawn.
-  var PERIOD = { sec: 1000, tenth: 100, hund: 10, thou: 4 };
-  var COUNT = { sec: 60, tenth: 600, hund: 6000, thou: 15000 };
+    let dropping = false;
 
-  var FONT = '"Helvetica Neue", Helvetica, Arial, sans-serif';
-  var COLW = 2; // heightfield column width, css px
+    // hour / minute / combo sizes solved per canvas + per minute so the pile
+    // reaches the top of the canvas right before the drop
+    let bigSizes = { hour: 200, minute: 125, combo: 235 };
 
-  /* ================= dom ================= */
+    let darkMode = false;
+    function inkColor() { return darkMode ? '#ffffff' : '#000000'; }
+    function paperColor() { return darkMode ? '#000000' : '#ffffff'; }
 
-  var cv = document.getElementById("cv");
-  var ctx = cv.getContext("2d");
-  var stage = document.getElementById("stage");
-  var titleEl = document.getElementById("title");
-  var readoutEl = document.getElementById("readout");
-  var searchEl = document.getElementById("citySearch");
-  var resultsEl = document.getElementById("cityResults");
-  var aspectEl = document.getElementById("aspect");
-  var segMode = document.getElementById("segMode");
+    // fixed physics timestep: matter.js is not framerate independent, and feeding it
+    // a varying dt is a major source of pile jitter. 120hz = 2 steps per 60fps frame
+    const PHYS_DT = 1000 / 120;
+    let physAccumMs = 0;
 
-  var dpr = Math.max(1, window.devicePixelRatio || 1);
-  var dark = false;
+    const FONT_STACK = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+    const GLYPH_FONT_PX = 512;  // raster resolution for textures
+    const GLYPH_PAD = 12;       // px padding around glyph raster
+    const TRACE_H = 220;        // downsampled height for contour tracing
+    let glyphCache = {};        // key -> { canvas, contours, contourBounds, tightW, tightH, color, drawX, drawY, str, outline, lw }
 
-  function ink() { return dark ? "#fff" : "#000"; }
-
-  /* ================= time zones ================= */
-
-  var zones = [];
-  try { zones = Intl.supportedValuesOf("timeZone"); } catch (e) {
-    zones = ["America/New_York","America/Chicago","America/Denver","America/Los_Angeles",
-      "America/Sao_Paulo","Europe/London","Europe/Paris","Europe/Berlin","Europe/Madrid",
-      "Europe/Rome","Europe/Moscow","Africa/Cairo","Africa/Lagos","Africa/Johannesburg",
-      "Asia/Dubai","Asia/Karachi","Asia/Kolkata","Asia/Bangkok","Asia/Shanghai",
-      "Asia/Singapore","Asia/Hong_Kong","Asia/Tokyo","Asia/Seoul","Australia/Sydney",
-      "Pacific/Auckland","Pacific/Honolulu"];
-  }
-  var cities = [];
-  for (var zi = 0; zi < zones.length; zi++) {
-    var z = zones[zi];
-    if (z.indexOf("/") < 0 || z.indexOf("Etc/") === 0) continue;
-    var segs = z.split("/");
-    cities.push({ zone: z, city: segs[segs.length - 1].replace(/_/g, " "), region: segs[0] });
-  }
-
-  var zone = "UTC", cityName = "UTC";
-  try {
-    zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch (e) {}
-  (function () {
-    for (var i = 0; i < cities.length; i++) {
-      if (cities[i].zone === zone) { cityName = cities[i].city; return; }
-    }
-    cityName = zone.split("/").pop().replace(/_/g, " ");
-  })();
-
-  var fmtCache = {};
-  function zoneFmt(tz) {
-    if (!fmtCache[tz]) {
-      fmtCache[tz] = new Intl.DateTimeFormat("en-GB", {
-        timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
-      });
-    }
-    return fmtCache[tz];
-  }
-  function zoneTime() {
-    var now = new Date();
-    var h = 0, m = 0, s = 0;
-    try {
-      var parts = zoneFmt(zone).formatToParts(now);
-      for (var i = 0; i < parts.length; i++) {
-        var p = parts[i];
-        if (p.type === "hour") h = +p.value;
-        else if (p.type === "minute") m = +p.value;
-        else if (p.type === "second") s = +p.value;
+    // Set decomp globally so Matter.js can perform convex decomposition on concave shapes
+    function registerDecomp() {
+      let d = typeof decomp !== 'undefined' ? decomp : (typeof polyDecomp !== 'undefined' ? polyDecomp : null);
+      if (d) {
+        window.decomp = d;
+        Matter.Common.setDecomp(d);
       }
-    } catch (e) {
-      h = now.getHours(); m = now.getMinutes(); s = now.getSeconds();
     }
-    return { h: h, m: m, s: s, ms: now.getMilliseconds(), key: zone + " " + h + ":" + m };
-  }
+    registerDecomp();
 
-  /* ================= city search ================= */
+    // ---------- time zone handling ----------
 
-  function renderResults(q) {
-    resultsEl.innerHTML = "";
-    q = q.trim().toLowerCase();
-    if (!q) { resultsEl.style.display = "none"; return; }
-    var starts = [], contains = [];
-    for (var i = 0; i < cities.length; i++) {
-      var lc = cities[i].city.toLowerCase();
-      if (lc.indexOf(q) === 0) starts.push(cities[i]);
-      else if (lc.indexOf(q) >= 0 || cities[i].zone.toLowerCase().indexOf(q) >= 0) contains.push(cities[i]);
+    let zone = 'UTC';
+    let cityName = 'UTC';
+    try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (e) {}
+
+    let fmtCache = {};
+    function zoneFmt(tz) {
+      if (!fmtCache[tz]) {
+        fmtCache[tz] = new Intl.DateTimeFormat('en-GB', {
+          timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+        });
+      }
+      return fmtCache[tz];
     }
-    var hits = starts.concat(contains).slice(0, 8);
-    if (!hits.length) { resultsEl.style.display = "none"; return; }
-    var nameCount = {};
-    for (var j = 0; j < hits.length; j++) nameCount[hits[j].city] = (nameCount[hits[j].city] || 0) + 1;
-    hits.forEach(function (c) {
-      var b = document.createElement("button");
-      b.className = "chip";
-      b.textContent = nameCount[c.city] > 1 ? c.city + " (" + c.region.replace(/_/g, " ") + ")" : c.city;
-      b.addEventListener("click", function () {
-        zone = c.zone; cityName = c.city;
-        searchEl.value = c.city;
-        resultsEl.style.display = "none";
-        resultsEl.innerHTML = "";
-        updateTitle();
-        resetSim();
-      });
-      resultsEl.appendChild(b);
+    function zoneTime() {
+      let now = new Date();
+      let h = 0, m = 0, s = 0;
+      try {
+        let parts = zoneFmt(zone).formatToParts(now);
+        for (let p of parts) {
+          if (p.type === 'hour') h = +p.value;
+          else if (p.type === 'minute') m = +p.value;
+          else if (p.type === 'second') s = +p.value;
+        }
+      } catch (e) {
+        h = now.getHours(); m = now.getMinutes(); s = now.getSeconds();
+      }
+      return { h: h, m: m, s: s, ms: now.getMilliseconds() };
+    }
+
+    // ---------- world city database (name|IANA zone) ----------
+
+    const CITY_DATA = [
+      // United States — Eastern
+      "New York|America/New_York","Boston|America/New_York","Philadelphia|America/New_York","Washington|America/New_York",
+      "Baltimore|America/New_York","Atlanta|America/New_York","Miami|America/New_York","Orlando|America/New_York",
+      "Tampa|America/New_York","Jacksonville|America/New_York","Charlotte|America/New_York","Raleigh|America/New_York",
+      "Durham|America/New_York","Greensboro|America/New_York","Richmond|America/New_York","Virginia Beach|America/New_York",
+      "Norfolk|America/New_York","Pittsburgh|America/New_York","Cleveland|America/New_York","Columbus|America/New_York",
+      "Cincinnati|America/New_York","Detroit|America/Detroit","Buffalo|America/New_York","Rochester|America/New_York",
+      "Syracuse|America/New_York","Albany|America/New_York","Newark|America/New_York","Jersey City|America/New_York",
+      "Providence|America/New_York","Hartford|America/New_York","New Haven|America/New_York","Louisville|America/Kentucky/Louisville",
+      "Lexington|America/New_York","Indianapolis|America/Indiana/Indianapolis","Knoxville|America/New_York","Savannah|America/New_York",
+      "Charleston|America/New_York","Columbia|America/New_York","Greenville|America/New_York","Tallahassee|America/New_York",
+      "Fort Lauderdale|America/New_York","West Palm Beach|America/New_York","St. Petersburg|America/New_York","Sarasota|America/New_York",
+      "Fort Myers|America/New_York","Gainesville|America/New_York","Daytona Beach|America/New_York","Key West|America/New_York",
+      "Grand Rapids|America/Detroit","Ann Arbor|America/Detroit","Toledo|America/New_York","Akron|America/New_York",
+      "Dayton|America/New_York","Harrisburg|America/New_York","Allentown|America/New_York","Scranton|America/New_York",
+      "Trenton|America/New_York","Wilmington|America/New_York","Asheville|America/New_York","Winston-Salem|America/New_York",
+      "Augusta|America/New_York","Macon|America/New_York","Burlington|America/New_York","Portland (Maine)|America/New_York",
+      // United States — Central
+      "Chicago|America/Chicago","Dallas|America/Chicago","Houston|America/Chicago","San Antonio|America/Chicago",
+      "Austin|America/Chicago","Fort Worth|America/Chicago","Oklahoma City|America/Chicago","Tulsa|America/Chicago",
+      "Kansas City|America/Chicago","St. Louis|America/Chicago","Minneapolis|America/Chicago","St. Paul|America/Chicago",
+      "Milwaukee|America/Chicago","Madison|America/Chicago","Des Moines|America/Chicago","Omaha|America/Chicago",
+      "Lincoln|America/Chicago","Wichita|America/Chicago","Little Rock|America/Chicago","New Orleans|America/Chicago",
+      "Baton Rouge|America/Chicago","Shreveport|America/Chicago","Jackson|America/Chicago","Mobile|America/Chicago",
+      "Huntsville|America/Chicago","Montgomery|America/Chicago","Birmingham (Alabama)|America/Chicago","Memphis|America/Chicago",
+      "Nashville|America/Chicago","Green Bay|America/Chicago","Fargo|America/Chicago","Sioux Falls|America/Chicago",
+      "Springfield|America/Chicago","Corpus Christi|America/Chicago","Lubbock|America/Chicago","Amarillo|America/Chicago",
+      "Waco|America/Chicago","Galveston|America/Chicago","Cedar Rapids|America/Chicago","Duluth|America/Chicago",
+      // United States — Mountain & Arizona
+      "Denver|America/Denver","Salt Lake City|America/Denver","Albuquerque|America/Denver","Santa Fe|America/Denver",
+      "Colorado Springs|America/Denver","Boulder|America/Denver","El Paso|America/Denver","Boise|America/Boise",
+      "Billings|America/Denver","Bozeman|America/Denver","Missoula|America/Denver","Cheyenne|America/Denver",
+      "Phoenix|America/Phoenix","Tucson|America/Phoenix","Scottsdale|America/Phoenix","Mesa|America/Phoenix","Flagstaff|America/Phoenix",
+      // United States — Pacific, Alaska, Hawaii
+      "Los Angeles|America/Los_Angeles","San Francisco|America/Los_Angeles","San Diego|America/Los_Angeles","San Jose|America/Los_Angeles",
+      "Seattle|America/Los_Angeles","Portland|America/Los_Angeles","Sacramento|America/Los_Angeles","Fresno|America/Los_Angeles",
+      "Long Beach|America/Los_Angeles","Oakland|America/Los_Angeles","Bakersfield|America/Los_Angeles","Las Vegas|America/Los_Angeles",
+      "Reno|America/Los_Angeles","Spokane|America/Los_Angeles","Tacoma|America/Los_Angeles","Eugene|America/Los_Angeles",
+      "Santa Barbara|America/Los_Angeles","Anaheim|America/Los_Angeles","Irvine|America/Los_Angeles","Riverside|America/Los_Angeles",
+      "Stockton|America/Los_Angeles","Modesto|America/Los_Angeles","Salem|America/Los_Angeles",
+      "Anchorage|America/Anchorage","Fairbanks|America/Anchorage","Juneau|America/Juneau","Honolulu|Pacific/Honolulu",
+      // Canada
+      "Toronto|America/Toronto","Montreal|America/Toronto","Ottawa|America/Toronto","Quebec City|America/Toronto",
+      "Halifax|America/Halifax","St. John's|America/St_Johns","Winnipeg|America/Winnipeg","Regina|America/Regina",
+      "Saskatoon|America/Regina","Calgary|America/Edmonton","Edmonton|America/Edmonton","Vancouver|America/Vancouver",
+      "Victoria|America/Vancouver","Mississauga|America/Toronto","Whitehorse|America/Whitehorse","Yellowknife|America/Yellowknife",
+      // Mexico, Central America, Caribbean
+      "Mexico City|America/Mexico_City","Guadalajara|America/Mexico_City","Monterrey|America/Monterrey","Cancun|America/Cancun",
+      "Tijuana|America/Tijuana","Puebla|America/Mexico_City","Oaxaca|America/Mexico_City","Merida|America/Merida",
+      "Puerto Vallarta|America/Bahia_Banderas","Guatemala City|America/Guatemala","San Salvador|America/El_Salvador",
+      "Tegucigalpa|America/Tegucigalpa","Managua|America/Managua","San José, Costa Rica|America/Costa_Rica","Panama City|America/Panama",
+      "Belize City|America/Belize","Havana|America/Havana","Kingston|America/Jamaica","Santo Domingo|America/Santo_Domingo",
+      "San Juan|America/Puerto_Rico","Port-au-Prince|America/Port-au-Prince","Nassau|America/Nassau","Bridgetown|America/Barbados",
+      "Port of Spain|America/Port_of_Spain","Hamilton (Bermuda)|Atlantic/Bermuda",
+      // South America
+      "Bogotá|America/Bogota","Medellín|America/Bogota","Cali|America/Bogota","Cartagena|America/Bogota",
+      "Caracas|America/Caracas","Quito|America/Guayaquil","Guayaquil|America/Guayaquil","Lima|America/Lima",
+      "La Paz|America/La_Paz","Santa Cruz|America/La_Paz","Asunción|America/Asuncion","Montevideo|America/Montevideo",
+      "Buenos Aires|America/Argentina/Buenos_Aires","Córdoba|America/Argentina/Cordoba","Mendoza|America/Argentina/Mendoza",
+      "Rosario|America/Argentina/Buenos_Aires","Santiago|America/Santiago","Valparaíso|America/Santiago",
+      "São Paulo|America/Sao_Paulo","Rio de Janeiro|America/Sao_Paulo","Brasília|America/Sao_Paulo","Belo Horizonte|America/Sao_Paulo",
+      "Porto Alegre|America/Sao_Paulo","Curitiba|America/Sao_Paulo","Salvador|America/Bahia","Recife|America/Recife",
+      "Fortaleza|America/Fortaleza","Manaus|America/Manaus","Georgetown|America/Guyana","Paramaribo|America/Paramaribo",
+      // Europe
+      "London|Europe/London","Manchester|Europe/London","Birmingham|Europe/London","Liverpool|Europe/London",
+      "Leeds|Europe/London","Glasgow|Europe/London","Edinburgh|Europe/London","Bristol|Europe/London",
+      "Cardiff|Europe/London","Belfast|Europe/London","Dublin|Europe/Dublin","Cork|Europe/Dublin",
+      "Lisbon|Europe/Lisbon","Porto|Europe/Lisbon","Madrid|Europe/Madrid","Barcelona|Europe/Madrid",
+      "Valencia|Europe/Madrid","Seville|Europe/Madrid","Bilbao|Europe/Madrid","Málaga|Europe/Madrid",
+      "Paris|Europe/Paris","Lyon|Europe/Paris","Marseille|Europe/Paris","Toulouse|Europe/Paris",
+      "Nice|Europe/Paris","Bordeaux|Europe/Paris","Lille|Europe/Paris","Nantes|Europe/Paris","Strasbourg|Europe/Paris",
+      "Brussels|Europe/Brussels","Antwerp|Europe/Brussels","Ghent|Europe/Brussels","Amsterdam|Europe/Amsterdam",
+      "Rotterdam|Europe/Amsterdam","The Hague|Europe/Amsterdam","Utrecht|Europe/Amsterdam","Luxembourg|Europe/Luxembourg",
+      "Berlin|Europe/Berlin","Munich|Europe/Berlin","Hamburg|Europe/Berlin","Frankfurt|Europe/Berlin",
+      "Cologne|Europe/Berlin","Düsseldorf|Europe/Berlin","Stuttgart|Europe/Berlin","Leipzig|Europe/Berlin",
+      "Dresden|Europe/Berlin","Nuremberg|Europe/Berlin","Hanover|Europe/Berlin","Bremen|Europe/Berlin",
+      "Zurich|Europe/Zurich","Geneva|Europe/Zurich","Basel|Europe/Zurich","Bern|Europe/Zurich","Lausanne|Europe/Zurich",
+      "Vienna|Europe/Vienna","Salzburg|Europe/Vienna","Graz|Europe/Vienna","Innsbruck|Europe/Vienna",
+      "Prague|Europe/Prague","Brno|Europe/Prague","Bratislava|Europe/Bratislava","Budapest|Europe/Budapest",
+      "Warsaw|Europe/Warsaw","Kraków|Europe/Warsaw","Gdańsk|Europe/Warsaw","Wrocław|Europe/Warsaw","Poznań|Europe/Warsaw",
+      "Rome|Europe/Rome","Milan|Europe/Rome","Naples|Europe/Rome","Turin|Europe/Rome","Florence|Europe/Rome",
+      "Venice|Europe/Rome","Bologna|Europe/Rome","Genoa|Europe/Rome","Palermo|Europe/Rome",
+      "Athens|Europe/Athens","Thessaloniki|Europe/Athens","Copenhagen|Europe/Copenhagen","Aarhus|Europe/Copenhagen",
+      "Stockholm|Europe/Stockholm","Gothenburg|Europe/Stockholm","Malmö|Europe/Stockholm","Oslo|Europe/Oslo",
+      "Bergen|Europe/Oslo","Helsinki|Europe/Helsinki","Reykjavik|Atlantic/Reykjavik","Tallinn|Europe/Tallinn",
+      "Riga|Europe/Riga","Vilnius|Europe/Vilnius","Minsk|Europe/Minsk","Kyiv|Europe/Kiev","Lviv|Europe/Kiev",
+      "Odesa|Europe/Kiev","Moscow|Europe/Moscow","St. Petersburg|Europe/Moscow","Kazan|Europe/Moscow",
+      "Novosibirsk|Asia/Novosibirsk","Yekaterinburg|Asia/Yekaterinburg","Vladivostok|Asia/Vladivostok",
+      "Istanbul|Europe/Istanbul","Ankara|Europe/Istanbul","Izmir|Europe/Istanbul","Bucharest|Europe/Bucharest",
+      "Cluj-Napoca|Europe/Bucharest","Sofia|Europe/Sofia","Belgrade|Europe/Belgrade","Zagreb|Europe/Zagreb",
+      "Ljubljana|Europe/Ljubljana","Sarajevo|Europe/Sarajevo","Skopje|Europe/Skopje","Tirana|Europe/Tirane",
+      "Podgorica|Europe/Podgorica","Chișinău|Europe/Chisinau","Valletta|Europe/Malta","Nicosia|Asia/Nicosia","Monaco|Europe/Monaco",
+      // Africa
+      "Cairo|Africa/Cairo","Alexandria|Africa/Cairo","Giza|Africa/Cairo","Casablanca|Africa/Casablanca",
+      "Rabat|Africa/Casablanca","Marrakesh|Africa/Casablanca","Fez|Africa/Casablanca","Tangier|Africa/Casablanca",
+      "Algiers|Africa/Algiers","Tunis|Africa/Tunis","Tripoli|Africa/Tripoli","Lagos|Africa/Lagos",
+      "Abuja|Africa/Lagos","Kano|Africa/Lagos","Ibadan|Africa/Lagos","Accra|Africa/Accra","Kumasi|Africa/Accra",
+      "Dakar|Africa/Dakar","Abidjan|Africa/Abidjan","Bamako|Africa/Bamako","Ouagadougou|Africa/Ouagadougou",
+      "Niamey|Africa/Niamey","Conakry|Africa/Conakry","Freetown|Africa/Freetown","Monrovia|Africa/Monrovia",
+      "Lomé|Africa/Lome","Cotonou|Africa/Porto-Novo","Douala|Africa/Douala","Yaoundé|Africa/Douala",
+      "Kinshasa|Africa/Kinshasa","Lubumbashi|Africa/Lubumbashi","Brazzaville|Africa/Brazzaville","Libreville|Africa/Libreville",
+      "Luanda|Africa/Luanda","Nairobi|Africa/Nairobi","Mombasa|Africa/Nairobi","Kampala|Africa/Kampala",
+      "Dar es Salaam|Africa/Dar_es_Salaam","Dodoma|Africa/Dar_es_Salaam","Addis Ababa|Africa/Addis_Ababa",
+      "Khartoum|Africa/Khartoum","Djibouti|Africa/Djibouti","Mogadishu|Africa/Mogadishu","Kigali|Africa/Kigali",
+      "Bujumbura|Africa/Bujumbura","Lusaka|Africa/Lusaka","Harare|Africa/Harare","Gaborone|Africa/Gaborone",
+      "Windhoek|Africa/Windhoek","Maputo|Africa/Maputo","Antananarivo|Indian/Antananarivo","Port Louis|Indian/Mauritius",
+      "Johannesburg|Africa/Johannesburg","Cape Town|Africa/Johannesburg","Durban|Africa/Johannesburg",
+      "Pretoria|Africa/Johannesburg","Gqeberha|Africa/Johannesburg",
+      // Middle East
+      "Jerusalem|Asia/Jerusalem","Tel Aviv|Asia/Jerusalem","Haifa|Asia/Jerusalem","Amman|Asia/Amman",
+      "Beirut|Asia/Beirut","Damascus|Asia/Damascus","Baghdad|Asia/Baghdad","Basra|Asia/Baghdad","Erbil|Asia/Baghdad",
+      "Riyadh|Asia/Riyadh","Jeddah|Asia/Riyadh","Mecca|Asia/Riyadh","Medina|Asia/Riyadh","Dammam|Asia/Riyadh",
+      "Kuwait City|Asia/Kuwait","Manama|Asia/Bahrain","Doha|Asia/Qatar","Dubai|Asia/Dubai","Abu Dhabi|Asia/Dubai",
+      "Sharjah|Asia/Dubai","Muscat|Asia/Muscat","Sanaa|Asia/Aden","Tehran|Asia/Tehran","Isfahan|Asia/Tehran",
+      "Shiraz|Asia/Tehran","Tabriz|Asia/Tehran","Mashhad|Asia/Tehran","Baku|Asia/Baku","Tbilisi|Asia/Tbilisi","Yerevan|Asia/Yerevan",
+      // South & Central Asia
+      "Kabul|Asia/Kabul","Islamabad|Asia/Karachi","Karachi|Asia/Karachi","Lahore|Asia/Karachi",
+      "Rawalpindi|Asia/Karachi","Peshawar|Asia/Karachi","Delhi|Asia/Kolkata","New Delhi|Asia/Kolkata",
+      "Mumbai|Asia/Kolkata","Kolkata|Asia/Kolkata","Chennai|Asia/Kolkata","Bengaluru|Asia/Kolkata",
+      "Bangalore|Asia/Kolkata","Hyderabad|Asia/Kolkata","Ahmedabad|Asia/Kolkata","Pune|Asia/Kolkata",
+      "Jaipur|Asia/Kolkata","Surat|Asia/Kolkata","Lucknow|Asia/Kolkata","Kochi|Asia/Kolkata",
+      "Colombo|Asia/Colombo","Dhaka|Asia/Dhaka","Chittagong|Asia/Dhaka","Kathmandu|Asia/Kathmandu",
+      "Thimphu|Asia/Thimphu","Malé|Indian/Maldives","Tashkent|Asia/Tashkent","Samarkand|Asia/Samarkand",
+      "Almaty|Asia/Almaty","Astana|Asia/Almaty","Bishkek|Asia/Bishkek","Dushanbe|Asia/Dushanbe",
+      "Ashgabat|Asia/Ashgabat","Ulaanbaatar|Asia/Ulaanbaatar",
+      // East & Southeast Asia
+      "Beijing|Asia/Shanghai","Shanghai|Asia/Shanghai","Shenzhen|Asia/Shanghai","Guangzhou|Asia/Shanghai",
+      "Chengdu|Asia/Shanghai","Chongqing|Asia/Shanghai","Wuhan|Asia/Shanghai","Xi'an|Asia/Shanghai",
+      "Hangzhou|Asia/Shanghai","Nanjing|Asia/Shanghai","Tianjin|Asia/Shanghai","Suzhou|Asia/Shanghai",
+      "Hong Kong|Asia/Hong_Kong","Macau|Asia/Macau","Taipei|Asia/Taipei","Kaohsiung|Asia/Taipei",
+      "Tokyo|Asia/Tokyo","Osaka|Asia/Tokyo","Kyoto|Asia/Tokyo","Yokohama|Asia/Tokyo","Nagoya|Asia/Tokyo",
+      "Sapporo|Asia/Tokyo","Fukuoka|Asia/Tokyo","Kobe|Asia/Tokyo","Hiroshima|Asia/Tokyo","Sendai|Asia/Tokyo",
+      "Seoul|Asia/Seoul","Busan|Asia/Seoul","Incheon|Asia/Seoul","Daegu|Asia/Seoul","Pyongyang|Asia/Pyongyang",
+      "Bangkok|Asia/Bangkok","Chiang Mai|Asia/Bangkok","Phuket|Asia/Bangkok","Hanoi|Asia/Ho_Chi_Minh",
+      "Ho Chi Minh City|Asia/Ho_Chi_Minh","Da Nang|Asia/Ho_Chi_Minh","Phnom Penh|Asia/Phnom_Penh",
+      "Vientiane|Asia/Vientiane","Yangon|Asia/Yangon","Naypyidaw|Asia/Yangon","Kuala Lumpur|Asia/Kuala_Lumpur",
+      "Penang|Asia/Kuala_Lumpur","Singapore|Asia/Singapore","Jakarta|Asia/Jakarta","Surabaya|Asia/Jakarta",
+      "Bandung|Asia/Jakarta","Medan|Asia/Jakarta","Bali|Asia/Makassar","Denpasar|Asia/Makassar",
+      "Makassar|Asia/Makassar","Manila|Asia/Manila","Cebu|Asia/Manila","Davao|Asia/Manila",
+      "Bandar Seri Begawan|Asia/Brunei","Dili|Asia/Dili",
+      // Oceania
+      "Sydney|Australia/Sydney","Melbourne|Australia/Melbourne","Brisbane|Australia/Brisbane","Perth|Australia/Perth",
+      "Adelaide|Australia/Adelaide","Canberra|Australia/Sydney","Hobart|Australia/Hobart","Darwin|Australia/Darwin",
+      "Gold Coast|Australia/Brisbane","Cairns|Australia/Brisbane","Auckland|Pacific/Auckland","Wellington|Pacific/Auckland",
+      "Christchurch|Pacific/Auckland","Queenstown|Pacific/Auckland","Suva|Pacific/Fiji","Port Moresby|Pacific/Port_Moresby",
+      "Nouméa|Pacific/Noumea","Papeete|Pacific/Tahiti","Apia|Pacific/Apia","Nuku'alofa|Pacific/Tongatapu","Guam|Pacific/Guam"
+    ];
+
+    function normName(s) {
+      return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    }
+
+    let cities = CITY_DATA.map(function (row) {
+      let i = row.indexOf('|');
+      let name = row.slice(0, i), tz = row.slice(i + 1);
+      return { city: name, zone: tz, region: tz.split('/')[0] };
     });
-    resultsEl.style.display = "flex";
-  }
-  searchEl.addEventListener("input", function () { renderResults(searchEl.value); });
-  searchEl.addEventListener("focus", function () { renderResults(searchEl.value); });
 
-  function updateTitle() { titleEl.textContent = "Gravity Clock: " + cityName; }
-  updateTitle();
+    // merge in every IANA zone city not already covered, so nothing is unreachable
+    (function () {
+      let seen = new Set(cities.map(function (c) { return normName(c.city); }));
+      let zones = [];
+      try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) {}
+      for (let z of zones) {
+        if (z.indexOf('/') < 0 || z.indexOf('Etc/') === 0) continue;
+        let segs = z.split('/');
+        let name = segs[segs.length - 1].replace(/_/g, ' ');
+        if (seen.has(normName(name))) continue;
+        seen.add(normName(name));
+        cities.push({ city: name, zone: z, region: segs[0] });
+      }
+    })();
 
-  /* ================= mode & aspect ================= */
+    (function () {
+      for (let c of cities) {
+        if (c.zone === zone) { cityName = c.city; return; }
+      }
+      cityName = zone.split('/').pop().replace(/_/g, ' ');
+    })();
 
-  segMode.addEventListener("click", function (e) {
-    var b = e.target.closest("button");
-    if (!b || (b.dataset.mode === "dark") === dark) return;
-    dark = b.dataset.mode === "dark";
-    var btns = segMode.querySelectorAll("button");
-    for (var i = 0; i < btns.length; i++) btns[i].classList.toggle("on", btns[i] === b);
-    document.body.classList.toggle("dark", dark);
-    recolorAll();
-  });
+    // ---------- geometry helpers ----------
 
-  aspectEl.addEventListener("change", function () { layout(); resetSim(); });
-
-  /* ================= canvas layout ================= */
-
-  var W = 0, H = 0;
-
-  function layout() {
-    var parts = aspectEl.value.split(":");
-    var ar = (+parts[0]) / (+parts[1]);
-    var availW = Math.max(60, stage.clientWidth - 44);
-    var availH = Math.max(60, stage.clientHeight - 44);
-    var w = availW, h = w / ar;
-    if (h > availH) { h = availH; w = h * ar; }
-    W = Math.round(w); H = Math.round(h);
-    cv.style.width = W + "px";
-    cv.style.height = H + "px";
-    cv.width = Math.round(W * dpr);
-    cv.height = Math.round(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-
-  var resizeTimer = null;
-  window.addEventListener("resize", function () {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(function () { layout(); resetSim(); }, 120);
-  });
-
-  /* ================= sprites & measurement ================= */
-
-  var measCanvas = document.createElement("canvas");
-  var meas = measCanvas.getContext("2d");
-
-  function measureText(text, px) {
-    meas.font = px + "px " + FONT;
-    var m = meas.measureText(text);
-    var asc = m.actualBoundingBoxAscent || px * 0.72;
-    var desc = m.actualBoundingBoxDescent || px * 0.02;
-    return { w: m.width, asc: asc, desc: desc, h: asc + desc };
-  }
-
-  // Font px whose ink height equals targetH.
-  function fontForHeight(sample, targetH) {
-    var m = measureText(sample, 100);
-    return 100 * targetH / m.h;
-  }
-
-  function makeSprite(text, px, stroke, withProfile) {
-    var m = measureText(text, px);
-    var pad = stroke ? 2 : 1;
-    var w = Math.max(1, Math.ceil(m.w) + pad * 2);
-    var h = Math.max(1, Math.ceil(m.h) + pad * 2);
-    var c = document.createElement("canvas");
-    c.width = Math.max(1, Math.round(w * dpr));
-    c.height = Math.max(1, Math.round(h * dpr));
-    var g = c.getContext("2d");
-    g.scale(dpr, dpr);
-    g.font = px + "px " + FONT;
-    if (stroke) {
-      g.lineWidth = 1;
-      g.strokeStyle = ink();
-      g.strokeText(text, pad, pad + m.asc);
-    } else {
-      g.fillStyle = ink();
-      g.fillText(text, pad, pad + m.asc);
+    // ramer-douglas-peucker simplification
+    function distanceToLine(p, p1, p2) {
+      let l2 = (p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2;
+      if (l2 === 0) return Math.hypot(p.x - p1.x, p.y - p1.y);
+      let t = ((p.x - p1.x) * (p2.x - p1.x) + (p.y - p1.y) * (p2.y - p1.y)) / l2;
+      t = Math.max(0, Math.min(1, t));
+      return Math.hypot(p.x - (p1.x + t * (p2.x - p1.x)), p.y - (p1.y + t * (p2.y - p1.y)));
     }
-    var sprite = { canvas: c, w: w, h: h };
-    if (withProfile) {
-      var ncols = Math.ceil(w / COLW);
-      var prof = new Array(ncols);
-      var data = g.getImageData(0, 0, c.width, c.height).data;
-      for (var i = 0; i < ncols; i++) {
-        var x0 = Math.round(i * COLW * dpr);
-        var x1 = Math.min(c.width, Math.round((i + 1) * COLW * dpr));
-        var top = h;
-        outer:
-        for (var y = 0; y < c.height; y++) {
-          for (var x = x0; x < x1; x++) {
-            if (data[(y * c.width + x) * 4 + 3] > 24) { top = y / dpr; break outer; }
+
+    function rdpSimplify(points, epsilon) {
+      if (points.length < 3) return points;
+      let dmax = 0;
+      let index = 0;
+      let end = points.length - 1;
+      for (let i = 1; i < end; i++) {
+        let d = distanceToLine(points[i], points[0], points[end]);
+        if (d > dmax) {
+          index = i;
+          dmax = d;
+        }
+      }
+      if (dmax > epsilon) {
+        let r1 = rdpSimplify(points.slice(0, index + 1), epsilon);
+        let r2 = rdpSimplify(points.slice(index), epsilon);
+        return r1.slice(0, r1.length - 1).concat(r2);
+      }
+      return [points[0], points[end]];
+    }
+
+    // clockwise moore neighborhood: N NE E SE S SW W NW
+    const MOORE_NB = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+
+    // moore-neighbor boundary tracing with jacob's stopping criterion.
+    // traces only the outer boundary of a component; interior holes are skipped
+    // intentionally since nothing can pile inside an enclosed counter anyway
+    function mooreTrace(isFg, sx, sy, maxSteps) {
+      let contour = [{ x: sx, y: sy }];
+      // raster scan order guarantees the west neighbor of the start pixel is background
+      let bx = sx - 1, by = sy;
+      let cx = sx, cy = sy;
+      let firstBx = bx, firstBy = by;
+      for (let step = 0; step < maxSteps; step++) {
+        let bi = -1;
+        for (let k = 0; k < 8; k++) {
+          if (cx + MOORE_NB[k][0] === bx && cy + MOORE_NB[k][1] === by) { bi = k; break; }
+        }
+        if (bi === -1) break;
+        let found = false;
+        for (let k = 1; k <= 8; k++) {
+          let idx = (bi + k) % 8;
+          let nx = cx + MOORE_NB[idx][0], ny = cy + MOORE_NB[idx][1];
+          if (isFg(nx, ny)) {
+            // new backtrack = last background cell checked before this hit
+            let pIdx = (idx + 7) % 8;
+            bx = cx + MOORE_NB[pIdx][0];
+            by = cy + MOORE_NB[pIdx][1];
+            cx = nx; cy = ny;
+            found = true;
+            break;
           }
         }
-        prof[i] = top;
+        if (!found) break; // isolated pixel
+        if (cx === sx && cy === sy && bx === firstBx && by === firstBy) break;
+        contour.push({ x: cx, y: cy });
       }
-      sprite.profile = prof;
+      return contour;
     }
-    return sprite;
-  }
 
-  /* ================= simulation state ================= */
+    // extract simplified outer contours (one per connected component) from a binary grid
+    function traceBinaryGrid(grid, gw, gh, epsilon) {
+      let visited = new Uint8Array(gw * gh);
+      let contours = [];
+      let stack = [];
+      let isFg = (px, py) => px >= 0 && py >= 0 && px < gw && py < gh && grid[py * gw + px] === 1;
 
-  var cols = [];              // heightfield: filled height per column, from the bottom
-  var pile = null, pileCtx = null;   // settled pieces, stamped once
-  var dropping = null;        // previous minute's pile falling away { canvas, y, vy }
-  var active = [];            // airborne pieces
-  var counters = { sec: 0, tenth: 0, hund: 0, thou: 0 };
-  var bigSpawned = false;
-  var minuteKey = null;
-  var sizes = null;           // per-layout piece sizing
-  var spriteCache = {};
+      for (let y = 1; y < gh - 1; y++) {
+        for (let x = 1; x < gw - 1; x++) {
+          let i = y * gw + x;
+          if (!grid[i] || visited[i]) continue;
 
-  function newLayer() {
-    var c = document.createElement("canvas");
-    c.width = cv.width; c.height = cv.height;
-    var g = c.getContext("2d");
-    g.scale(dpr, dpr);
-    return { canvas: c, g: g };
-  }
+          let contour = mooreTrace(isFg, x, y, gw * gh * 4);
 
-  function computeSizes() {
-    var D = Math.sqrt(W * H);
-    var secH = REL.sec * D;
-    var secFont = fontForHeight("44", secH);
-    var secW = measureText("44", secFont).w;
-    var tenthH = REL.tenth * D;
-    var tenthFont = fontForHeight("4", tenthH);
-    var tenthW = measureText("4", tenthFont).w;
-    var hundS = REL.hund * D;
-    var thouS = REL.thou * D;
+          // flood-mark the whole component so it only gets traced once
+          stack.length = 0;
+          stack.push(i);
+          visited[i] = 1;
+          let area = 0;
+          while (stack.length) {
+            let ci = stack.pop();
+            area++;
+            let px = ci % gw, py = (ci / gw) | 0;
+            for (let k = 0; k < 8; k++) {
+              let nx = px + MOORE_NB[k][0], ny = py + MOORE_NB[k][1];
+              if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+              let ni = ny * gw + nx;
+              if (grid[ni] && !visited[ni]) { visited[ni] = 1; stack.push(ni); }
+            }
+          }
 
-    var small =
-      COUNT.sec * secW * secH +
-      COUNT.tenth * tenthW * tenthH +
-      COUNT.hund * hundS * hundS +
-      COUNT.thou * thouS * thouS;
-
-    var remain = Math.max(FILL * W * H - small, 0.1 * W * H);
-    var target = remain / 2; // per big number
-    var m100 = measureText("44", 100);
-    var bigFont = 100 * Math.sqrt(target / (m100.w * m100.h));
-    // keep a single number from spanning the full canvas
-    var maxW = W * 0.9, maxH = H * 0.6;
-    bigFont = Math.min(bigFont, 100 * maxW / m100.w, 100 * maxH / m100.h);
-
-    sizes = { secFont: secFont, tenthFont: tenthFont, hundS: hundS, thouS: thouS, bigFont: bigFont };
-  }
-
-  function resetSim() {
-    computeSizes();
-    spriteCache = {};
-    cols = new Array(Math.max(1, Math.ceil(W / COLW)));
-    for (var i = 0; i < cols.length; i++) cols[i] = 0;
-    var layer = newLayer();
-    pile = layer.canvas; pileCtx = layer.g;
-    dropping = null;
-    active = [];
-    counters = { sec: 0, tenth: 0, hund: 0, thou: 0 };
-    bigSpawned = false;
-    minuteKey = null; // forces a quiet rebuild on the next frame
-  }
-
-  function rollover(animate) {
-    if (animate && pile) {
-      dropping = { canvas: pile, y: 0, vy: 0 };
-    }
-    var layer = newLayer();
-    pile = layer.canvas; pileCtx = layer.g;
-    for (var i = 0; i < cols.length; i++) cols[i] = 0;
-    counters = { sec: 0, tenth: 0, hund: 0, thou: 0 };
-    bigSpawned = false;
-  }
-
-  /* ================= pieces ================= */
-
-  // Pieces tumble into the lowest hollow near where they were dropped,
-  // so the pile packs evenly instead of growing spires.
-  function bestX(p, win) {
-    var step = Math.max(COLW, Math.min(p.w, 12));
-    var lo = Math.max(0, p.x - win);
-    var hi = Math.max(lo, Math.min(W - p.w, p.x + win));
-    var xs = [], hs = [], hmin = Infinity;
-    for (var x = lo; x <= hi; x += step) {
-      var c0 = Math.max(0, Math.floor(x / COLW));
-      var c1 = Math.min(cols.length - 1, Math.ceil((x + p.w) / COLW) - 1);
-      var hmax = 0;
-      for (var i = c0; i <= c1; i++) if (cols[i] > hmax) hmax = cols[i];
-      xs.push(x); hs.push(hmax);
-      if (hmax < hmin) hmin = hmax;
-    }
-    var tol = p.big ? 6 : Math.max(2, p.h);
-    var picks = [];
-    for (var j = 0; j < xs.length; j++) if (hs[j] <= hmin + tol) picks.push(xs[j]);
-    return picks.length ? picks[(Math.random() * picks.length) | 0] : p.x;
-  }
-
-  function landingY(p) {
-    var c0 = Math.max(0, Math.floor(p.x / COLW));
-    var c1 = Math.min(cols.length - 1, Math.ceil((p.x + p.w) / COLW) - 1);
-    var hmax = 0;
-    for (var i = c0; i <= c1; i++) if (cols[i] > hmax) hmax = cols[i];
-    return H - hmax - p.h;
-  }
-
-  function settle(p) {
-    var y = landingY(p);
-    var c0 = Math.max(0, Math.floor(p.x / COLW));
-    var c1 = Math.min(cols.length - 1, Math.ceil((p.x + p.w) / COLW) - 1);
-    if (p.sprite) {
-      pileCtx.drawImage(p.sprite.canvas, p.x, y, p.w, p.h);
-      var prof = p.sprite.profile;
-      for (var i = c0; i <= c1; i++) {
-        var off = prof ? prof[Math.min(prof.length - 1, i - c0)] : 0;
-        var hNew = H - (y + off);
-        if (hNew > cols[i]) cols[i] = Math.min(H, hNew);
+          // ignore antialiasing specks
+          if (area < 12 || contour.length < 8) continue;
+          let simplified = rdpSimplify(contour, epsilon);
+          if (simplified.length >= 3) contours.push(simplified);
+        }
       }
-    } else {
-      pileCtx.fillStyle = ink();
-      pileCtx.fillRect(p.x, y, p.w, p.h);
-      for (var j = c0; j <= c1; j++) {
-        var hn = H - y;
-        if (hn > cols[j]) cols[j] = Math.min(H, hn);
+      return contours;
+    }
+
+    // ---------- glyph generation (helvetica raster + traced collision contours) ----------
+
+    function renderGlyphTexture(glyph, colorHex) {
+      let ctx = glyph.canvas.getContext('2d');
+      ctx.clearRect(0, 0, glyph.canvas.width, glyph.canvas.height);
+      ctx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
+      ctx.textBaseline = 'alphabetic';
+      if (glyph.outline) {
+        ctx.strokeStyle = colorHex;
+        ctx.lineWidth = glyph.lw;
+        ctx.strokeText(glyph.str, glyph.drawX, glyph.drawY);
+      } else {
+        ctx.fillStyle = colorHex;
+        ctx.fillText(glyph.str, glyph.drawX, glyph.drawY);
+      }
+      glyph.color = colorHex;
+    }
+
+    // outline=true renders the texture as a stroke (used when hour === minute) while
+    // the collision contours are still traced from the filled shape
+    function getGlyph(val, outline, lw) {
+      let colorHex = inkColor();
+      let key = String(val) + (outline ? ':o' : '');
+      let cached = glyphCache[key];
+      if (cached) {
+        let lwStale = outline && lw && Math.abs(cached.lw - lw) > cached.lw * 0.2;
+        if (lwStale) cached.lw = lw;
+        // contours are color-independent; only the texture needs a repaint
+        if (cached.color !== colorHex || lwStale) renderGlyphTexture(cached, colorHex);
+        return cached;
+      }
+
+      let str = String(val);
+      let canvas = document.createElement('canvas');
+      let ctx = canvas.getContext('2d');
+      ctx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
+      let m = ctx.measureText(str);
+
+      // tight bbox from actual metrics, fall back to loose estimate on ancient browsers
+      let left = Math.ceil(m.actualBoundingBoxLeft !== undefined ? m.actualBoundingBoxLeft : 0);
+      let right = Math.ceil(m.actualBoundingBoxRight !== undefined ? m.actualBoundingBoxRight : m.width);
+      let asc = Math.ceil(m.actualBoundingBoxAscent !== undefined ? m.actualBoundingBoxAscent : GLYPH_FONT_PX * 0.75);
+      let desc = Math.ceil(m.actualBoundingBoxDescent !== undefined ? m.actualBoundingBoxDescent : GLYPH_FONT_PX * 0.05);
+
+      let tightW = left + right;
+      let tightH = asc + desc;
+
+      canvas.width = tightW + 2 * GLYPH_PAD;
+      canvas.height = tightH + 2 * GLYPH_PAD;
+
+      let glyph = {
+        canvas: canvas,
+        str: str,
+        tightW: tightW,
+        tightH: tightH,
+        drawX: GLYPH_PAD + left,
+        drawY: GLYPH_PAD + asc,
+        color: null,
+        outline: !!outline,
+        lw: lw || 2,
+        contours: [],
+        contourBounds: null
+      };
+
+      renderGlyphTexture(glyph, colorHex);
+
+      // trace from a filled render so outline glyphs still get solid collision shapes
+      let fillCanvas = document.createElement('canvas');
+      fillCanvas.width = canvas.width;
+      fillCanvas.height = canvas.height;
+      let fillCtx = fillCanvas.getContext('2d');
+      fillCtx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
+      fillCtx.textBaseline = 'alphabetic';
+      fillCtx.fillStyle = '#000';
+      fillCtx.fillText(str, glyph.drawX, glyph.drawY);
+
+      // downsample the raster and trace pixel-exact outer boundaries
+      let scale = TRACE_H / fillCanvas.height;
+      let tw = Math.max(2, Math.round(fillCanvas.width * scale));
+      let th = TRACE_H;
+      let tCanvas = document.createElement('canvas');
+      tCanvas.width = tw;
+      tCanvas.height = th;
+      let tCtx = tCanvas.getContext('2d');
+      tCtx.drawImage(fillCanvas, 0, 0, tw, th);
+      let data = tCtx.getImageData(0, 0, tw, th).data;
+
+      // 1px empty border so tracing never runs off-grid
+      let gw = tw + 2, gh = th + 2;
+      let grid = new Uint8Array(gw * gh);
+      for (let y = 0; y < th; y++) {
+        for (let x = 0; x < tw; x++) {
+          if (data[(y * tw + x) * 4 + 3] > 100) grid[(y + 1) * gw + (x + 1)] = 1;
+        }
+      }
+
+      let traced = traceBinaryGrid(grid, gw, gh, 2.4);
+
+      // map trace-space points back to full-res raster coords
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (let c of traced) {
+        let mapped = c.map(p => ({ x: (p.x - 1) / scale, y: (p.y - 1) / scale }));
+        for (let p of mapped) {
+          if (p.x < minX) minX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y > maxY) maxY = p.y;
+        }
+        glyph.contours.push(mapped);
+      }
+      if (glyph.contours.length > 0) {
+        glyph.contourBounds = { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+      }
+
+      glyphCache[key] = glyph;
+      return glyph;
+    }
+
+    // build a single rigid compound from multiple (possibly disjoint, possibly concave) contours.
+    // note: passing multiple sets directly to Bodies.fromVertices re-centers each convex set
+    // onto the same point, which collapses multi-digit numbers -- so each contour gets its own
+    // body at its own centroid and the parts are merged manually
+    function compoundFromContours(sets, x, y, options) {
+      let parts = [];
+      for (let set of sets) {
+        let c = Matter.Vertices.centre(set);
+        let b = null;
+        try {
+          // options must be passed to the inner bodies too: matter resolves collisions
+          // using PART-level friction/restitution, not the parent's, so parts created
+          // with defaults would be near-frictionless and slide
+          b = Bodies.fromVertices(c.x, c.y, [set], options, true, 0.01, 10, 0.01);
+        } catch (e) {
+          b = null;
+        }
+        if (!b) continue;
+        let start = b.parts.length > 1 ? 1 : 0;
+        for (let i = start; i < b.parts.length; i++) parts.push(b.parts[i]);
+      }
+      if (parts.length === 0) return null;
+
+      let body = Body.create(Object.assign({ parts: parts }, options));
+
+      // record where glyph-space origin sits relative to the centroid before moving the body.
+      // body.bounds.min currently equals the min of all contour points in glyph coordinates
+      let cb = body.bounds;
+      let anchor = {
+        x: cb.min.x - body.position.x,
+        y: cb.min.y - body.position.y
+      };
+      Body.setPosition(body, { x: x, y: y });
+      return { body: body, anchor: anchor };
+    }
+
+    // ---------- number sizing (solved so the pile crests at the canvas top) ----------
+
+    function glyphAspect(str) {
+      let g = getGlyph(str);
+      return g.tightW / g.tightH;
+    }
+
+    function computeBigSizes() {
+      if (!width || !height) return;
+      let hStr = String(simHour), mStr = String(simMinute);
+      let aH = glyphAspect(hStr);
+      let aM = glyphAspect(mStr);
+      let aT = glyphAspect('4');   // representative single digit
+      let aS = glyphAspect('37');  // representative two-digit second
+
+      // per minute: 540 tenths (9/sec) + ~57 second numbers + hour + minute
+      let tenthTotal = 540 * Math.pow(height * TENTHS_PCT / 100, 2) * aT;
+      let secTotal = 57 * Math.pow(height * SECONDS_PCT / 100, 2) * aS;
+      let remain = Math.max(FILL * width * height - tenthTotal - secTotal, 0.05 * width * height);
+
+      let hour = Math.sqrt(remain / (aH + BIG_RATIO * BIG_RATIO * aM));
+      // keep single numbers from spanning the whole canvas
+      hour = Math.min(hour, 0.85 * height, 0.92 * width / aH);
+      let minute = hour * BIG_RATIO;
+      // hour === minute: one outlined number carries the area both would have had
+      let combo = Math.min(hour * Math.sqrt(1 + BIG_RATIO * BIG_RATIO), 0.85 * height, 0.92 * width / aH);
+
+      bigSizes = { hour: hour, minute: minute, combo: combo };
+    }
+
+    // ---------- p5 lifecycle ----------
+
+    function setup() {
+      pixelDensity(1);
+
+      let canvasElement = createCanvas(100, 100);
+      canvasElement.parent('canvas-container');
+
+      // sleeping lets settled bodies freeze completely instead of being re-solved
+      // every frame, which is what eliminates residual pile vibration
+      engine = Engine.create({ enableSleeping: true });
+      world = engine.world;
+
+      engine.positionIterations = 20;
+      engine.velocityIterations = 20;
+      world.gravity.y = GRAVITY;
+
+      // matter clamps static friction low by default, which lets contacts creep
+      Matter.Resolver._frictionMaxStatic = 2;
+
+      registerDecomp();
+      updateCanvasSize();
+      resetClock();
+      started = true;
+    }
+
+    function draw() {
+      background(paperColor());
+
+      let zt = zoneTime();
+      let readoutEl = document.getElementById('readout');
+      if (readoutEl) {
+        readoutEl.textContent = pad2(zt.h) + ':' + pad2(zt.m) + ':' + pad2(zt.s) + ':' + Math.floor(zt.ms / 100);
+      }
+
+      // fixed-timestep accumulator; cap backlog so a background tab doesn't spiral
+      physAccumMs += Math.min(deltaTime, 100);
+      let physSteps = 0;
+      while (physAccumMs >= PHYS_DT && physSteps < 10) {
+        Engine.update(engine, PHYS_DT);
+        physAccumMs -= PHYS_DT;
+        physSteps++;
+      }
+      if (physSteps >= 10) physAccumMs = 0;
+
+      // freeze pass: a sleeping body has already been motionless for ~1/3s, so promote
+      // it to static. a sequential-impulse solver cannot hold a 500-body stack rigid at
+      // any friction value; infinite mass can. this is what stops the bottom of the
+      // pile from creeping as weight accumulates above it
+      if (!dropping) {
+        for (let n of numbers) {
+          if (!n.frozen && n.body.isSleeping) {
+            Body.setStatic(n.body, true);
+            n.frozen = true;
+          }
+        }
+      }
+
+      // advance the clock from the selected city's real time
+      if (!dropping) {
+        if (zt.h !== simHour || zt.m !== simMinute) {
+          startDrop();
+        } else {
+          let target = zt.s * 10 + Math.floor(zt.ms / 100);
+          if (target - simTick > 50) {
+            // several seconds behind (hidden tab etc): rebuild instead of raining a backlog
+            resetClock();
+          } else {
+            while (simTick < target) {
+              simTick++;
+              let t = simTick % 10;
+              if (t === 0) {
+                simSecond = simTick / 10;
+                spawnForSecond(simSecond);
+              } else {
+                spawnNumber(t, 'tenths');
+              }
+            }
+          }
+        }
+      }
+
+      for (let n of numbers) {
+        n.display();
+      }
+
+      if (dropping && numbers.every(n => n.isOffscreen())) {
+        resetClock();
       }
     }
-  }
 
-  function addPiece(p, instant) {
-    p.x = bestX(p, p.big ? W * 0.12 : Math.max(60, p.w * 8));
-    if (instant) { settle(p); }
-    else { p.y = -p.h; p.vy = 0; active.push(p); }
-  }
+    function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
-  function cachedSprite(key, text, px, stroke) {
-    var k = key + ":" + text + (stroke ? ":o" : "");
-    if (!spriteCache[k]) spriteCache[k] = makeSprite(text, px, stroke, false);
-    return spriteCache[k];
-  }
-
-  function pad2(n) { return (n < 10 ? "0" : "") + n; }
-
-  function spawnBig(zt, instant) {
-    var equal = zt.h === zt.m;
-    var hourS = makeSprite(pad2(zt.h), sizes.bigFont, false, true);
-    // when hour and minute match, the minute keeps its full size but is
-    // rendered as a 1px outline to tell the two apart
-    var minS = makeSprite(pad2(zt.m), sizes.bigFont, equal, true);
-    var hx = Math.min(Math.max(0, Math.random() * Math.max(1, W / 2 - hourS.w * 0.7)), Math.max(0, W - hourS.w));
-    var hourP = { x: hx, w: hourS.w, h: hourS.h, sprite: hourS, big: true };
-    addPiece(hourP, instant);
-    // minute lands to the right of the hour; on narrow canvases it stacks on top
-    var mx = Math.min(Math.max(0, hourP.x + hourS.w + W * 0.02), Math.max(0, W - minS.w));
-    addPiece({ x: mx, w: minS.w, h: minS.h, sprite: minS, big: true }, instant);
-  }
-
-  function spawnUnit(unit, k, instant) {
-    var p;
-    if (unit === "sec") {
-      var s = cachedSprite("s", pad2(k), sizes.secFont, false);
-      p = { x: Math.random() * Math.max(1, W - s.w), w: s.w, h: s.h, sprite: s };
-    } else if (unit === "tenth") {
-      var t = cachedSprite("t", String(k % 10), sizes.tenthFont, false);
-      p = { x: Math.random() * Math.max(1, W - t.w), w: t.w, h: t.h, sprite: t };
-    } else {
-      var side = unit === "hund" ? sizes.hundS : sizes.thouS;
-      p = { x: Math.random() * Math.max(1, W - side), w: side, h: side };
-    }
-    addPiece(p, instant);
-  }
-
-  function emitDue(zt, target) {
-    if (!bigSpawned) { spawnBig(zt, target > CATCHUP_MS); bigSpawned = true; }
-    for (var unit in PERIOD) {
-      var P = PERIOD[unit];
-      while (counters[unit] < COUNT[unit] && counters[unit] * P <= target) {
-        spawnUnit(unit, counters[unit], target - counters[unit] * P > CATCHUP_MS);
-        counters[unit]++;
-      }
-    }
-  }
-
-  /* ================= recolor (mode switch) ================= */
-
-  function recolorLayer(c) {
-    var g = c.getContext("2d");
-    g.save();
-    g.setTransform(1, 0, 0, 1, 0, 0);
-    g.globalCompositeOperation = "source-in";
-    g.fillStyle = ink();
-    g.fillRect(0, 0, c.width, c.height);
-    g.restore();
-  }
-
-  function recolorAll() {
-    if (pile) recolorLayer(pile);
-    if (dropping) recolorLayer(dropping.canvas);
-    for (var k in spriteCache) recolorLayer(spriteCache[k].canvas);
-    for (var i = 0; i < active.length; i++) {
-      if (active[i].sprite && !spriteCache[keyOf(active[i])]) recolorLayer(active[i].sprite.canvas);
-    }
-  }
-  function keyOf() { return " "; } // big sprites are never cached; always recolor them
-
-  /* ================= main loop ================= */
-
-  var lastT = performance.now();
-
-  function frame(now) {
-    requestAnimationFrame(frame);
-    var dt = Math.min(0.05, (now - lastT) / 1000);
-    lastT = now;
-
-    var zt = zoneTime();
-    readoutEl.textContent =
-      pad2(zt.h) + ":" + pad2(zt.m) + ":" + pad2(zt.s) + ":" +
-      Math.floor(zt.ms / 100) + ":" + (Math.floor(zt.ms / 10) % 10) + ":" + (zt.ms % 10);
-
-    if (zt.key !== minuteKey) {
-      rollover(minuteKey !== null);
-      minuteKey = zt.key;
-    }
-    emitDue(zt, zt.s * 1000 + zt.ms);
-
-    var acc = GRAVITY * 1.2 * H;
-    if (dropping) {
-      dropping.vy += acc * dt;
-      dropping.y += dropping.vy * dt;
-      if (dropping.y > H) dropping = null;
-    }
-    for (var i = active.length - 1; i >= 0; i--) {
-      var p = active[i];
-      p.vy += acc * dt;
-      p.y += p.vy * dt;
-      if (p.y >= landingY(p)) {
-        // re-tumble against the field as it is now, not as it was at spawn
-        if (!p.big) p.x = bestX(p, Math.max(24, p.w * 4));
-        settle(p);
-        active.splice(i, 1);
+    function spawnForSecond(s, startY) {
+      if (s <= 0) return;
+      if (s === simHour && simHour === simMinute) {
+        spawnNumber(simHour, 'combo', startY);
+      } else if (s === simHour) {
+        spawnNumber(simHour, 'hours', startY);
+      } else if (s === simMinute) {
+        spawnNumber(simMinute, 'minutes', startY);
+      } else {
+        spawnNumber(s, 'seconds', startY);
       }
     }
 
-    ctx.clearRect(0, 0, W, H);
-    if (dropping) ctx.drawImage(dropping.canvas, 0, dropping.y, W, H);
-    ctx.drawImage(pile, 0, 0, W, H);
-    for (var j = 0; j < active.length; j++) {
-      var q = active[j];
-      if (q.sprite) ctx.drawImage(q.sprite.canvas, q.x, q.y, q.w, q.h);
-      else { ctx.fillStyle = ink(); ctx.fillRect(q.x, q.y, q.w, q.h); }
+    function spawnNumber(value, unit, startY) {
+      let size;
+      if (unit === 'tenths') {
+        size = height * (TENTHS_PCT / 100);
+      } else if (unit === 'seconds') {
+        size = height * (SECONDS_PCT / 100);
+      } else if (unit === 'minutes') {
+        size = bigSizes.minute;
+      } else if (unit === 'hours') {
+        size = bigSizes.hour;
+      } else if (unit === 'combo') {
+        size = bigSizes.combo;
+      }
+
+      numbers.push(new FallingNumber(value, unit, size, startY));
     }
-  }
 
-  /* ================= boot ================= */
+    function createBoundaries() {
+      if (floorBody) Composite.remove(world, floorBody);
 
-  layout();
-  resetSim();
-  searchEl.value = cityName;
-  requestAnimationFrame(frame);
-})();
+      floorBody = Bodies.rectangle(width / 2, height + 25, width * 2, 50, {
+        isStatic: true,
+        restitution: BOUNCE,
+        friction: 0.5
+      });
+
+      wallLeft = Bodies.rectangle(-25, height / 2, 50, height * 2, {
+        isStatic: true,
+        friction: 0,
+        restitution: 0.2
+      });
+
+      wallRight = Bodies.rectangle(width + 25, height / 2, 50, height * 2, {
+        isStatic: true,
+        friction: 0,
+        restitution: 0.2
+      });
+
+      Composite.add(world, [floorBody, wallLeft, wallRight]);
+    }
+
+    // sleeping/frozen bodies ignore world changes, so anything that alters gravity,
+    // boundaries, or removes the floor must thaw the pile first.
+    // order matters: un-static restores mass/inertia, then clear the sleep flag
+    function wakeAll() {
+      for (let n of numbers) {
+        if (n.frozen) {
+          Body.setStatic(n.body, false);
+          n.frozen = false;
+        }
+        Matter.Sleeping.set(n.body, false);
+      }
+    }
+
+    function startDrop() {
+      dropping = true;
+      wakeAll();
+      if (floorBody) Composite.remove(world, floorBody);
+    }
+
+    function resetClock() {
+      for (let n of numbers) {
+        Composite.remove(world, n.body);
+      }
+      numbers = [];
+      dropping = false;
+
+      let zt = zoneTime();
+      simHour = zt.h;
+      simMinute = zt.m;
+      simSecond = zt.s;
+      simTick = zt.s * 10 + Math.floor(zt.ms / 100);
+
+      Composite.clear(world, false);
+      createBoundaries();
+      computeBigSizes();
+
+      // sequential historical waterfall stack builder
+      let spawnIndex = 0;
+      for (let s = 1; s <= simSecond; s++) {
+        // vertically stagger starting heights so initial bodies don't spawn overlapped
+        let staggerY = -spawnIndex * (height / 10) - 100;
+        spawnForSecond(s, staggerY);
+        spawnIndex++;
+      }
+    }
+
+    function updateCanvasSize() {
+      let container = document.getElementById('canvas-container');
+      let containerW = Math.max(200, (container ? container.clientWidth : windowWidth - 292) - 44);
+      let containerH = Math.max(200, (container ? container.clientHeight : windowHeight) - 44);
+
+      let aspectRatioStr = document.getElementById('aspectRatioSelect').value;
+      let parts = aspectRatioStr.split(':');
+      let ratio = parseInt(parts[0], 10) / parseInt(parts[1], 10);
+
+      let h = containerH;
+      let w = h * ratio;
+      if (w > containerW) {
+        w = containerW;
+        h = w / ratio;
+      }
+
+      w = Math.floor(w / 2) * 2;
+      h = Math.floor(h / 2) * 2;
+
+      resizeCanvas(w, h);
+
+      if (world) {
+        let toRemove = [];
+        if (wallLeft) toRemove.push(wallLeft);
+        if (wallRight) toRemove.push(wallRight);
+        if (toRemove.length > 0) Composite.remove(world, toRemove);
+
+        if (!dropping && floorBody) {
+          Composite.remove(world, floorBody);
+        }
+        createBoundaries();
+        computeBigSizes();
+        wakeAll();
+      }
+    }
+
+    function windowResized() {
+      updateCanvasSize();
+    }
+
+    // ---------- falling number body ----------
+
+    class FallingNumber {
+      constructor(val, unit, size, startY) {
+        this.val = val;
+        this.unit = unit;
+        this.size = size;
+        this.outline = (unit === 'combo');
+        this.isConcave = false;
+        this.frozen = false;
+        this.body = null;
+
+        let glyph = getGlyph(val, this.outline);
+        // world px per raster px, anchored to the glyph's tight metric height
+        let s = size / glyph.tightH;
+        this.rasterScale = s;
+        // 1px on-screen stroke for the outlined combo number
+        this.lw = Math.max(0.6, 1 / s);
+        if (this.outline) glyph = getGlyph(val, true, this.lw);
+
+        let initialY = (startY !== undefined) ? startY : -size * 2;
+
+        let options = {
+          restitution: BOUNCE,
+          friction: 0.8,
+          frictionStatic: 1.2,
+          frictionAir: 0.01,
+          // at constant density mass scales with AREA, so the hour glyph outweighs a
+          // tenth ~170:1 and lands like a boulder on gravel, squirting small numbers
+          // out sideways. scaling density by 1/size makes mass scale with linear size
+          // instead, ~10:1, which still reads as heavy without wrecking the pile
+          density: 0.01 * (60 / size),
+          slop: 0.02,            // 0.005 was so tight the solver micro-corrected forever
+          sleepThreshold: 40     // ~1/3s of stillness before sleeping
+        };
+
+        // only hours, minutes and the combined number get exact concave geometry;
+        // tenths and seconds stay on cheap rectangle physics
+        let isConcaveUnit = (unit === 'hours' || unit === 'minutes' || unit === 'combo');
+        if (isConcaveUnit && glyph.contours.length > 0) {
+          try {
+            let sets = glyph.contours.map(c => c.map(p => ({ x: p.x * s, y: p.y * s })));
+            let spawnX = random(size, Math.max(size + 1, width - size));
+            let result = compoundFromContours(sets, spawnX, initialY, options);
+
+            if (result) {
+              this.body = result.body;
+              this.isConcave = true;
+              // canvas top-left in local body coords:
+              // anchor = contour-min offset from centroid; contourBounds.min = same point in raster px
+              this.imgOffset = {
+                x: result.anchor.x - glyph.contourBounds.min.x * s,
+                y: result.anchor.y - glyph.contourBounds.min.y * s
+              };
+            }
+          } catch (err) {
+            console.warn("Concave body creation failed, falling back to rectangle.", err);
+            this.body = null;
+            this.isConcave = false;
+          }
+        }
+
+        // rectangle physics (tenths, seconds, or fallback)
+        if (!this.body) {
+          let w = glyph.tightW * s;
+          let h = glyph.tightH * s;
+          this.w = w;
+          this.h = h;
+          let spawnX = random(w / 2, Math.max(w / 2 + 1, width - w / 2));
+          this.body = Bodies.rectangle(spawnX, initialY, w, h, options);
+          // tight box is inset by pad on all sides of the raster
+          this.imgOffset = {
+            x: -w / 2 - GLYPH_PAD * s,
+            y: -h / 2 - GLYPH_PAD * s
+          };
+        }
+
+        Body.setAngularVelocity(this.body, random(-0.06, 0.06));
+        Composite.add(world, this.body);
+      }
+
+      isOffscreen() {
+        let { x, y } = this.body.position;
+        return y > height + 200 || x < -200 || x > width + 200;
+      }
+
+      display() {
+        let glyph = getGlyph(this.val, this.outline, this.lw);
+        let pos = this.body.position;
+        let angle = this.body.angle;
+        let s = this.rasterScale;
+
+        push();
+        translate(pos.x, pos.y);
+        rotate(angle);
+        // draw the raster directly; p5 transforms apply to the underlying 2d context
+        drawingContext.drawImage(
+          glyph.canvas,
+          this.imgOffset.x,
+          this.imgOffset.y,
+          glyph.canvas.width * s,
+          glyph.canvas.height * s
+        );
+        pop();
+      }
+    }
+
+    // ---------- ui wiring ----------
+
+    function updateTitle() {
+      document.getElementById('title').textContent = 'Gravity Clock: ' + cityName;
+    }
+
+    (function () {
+      let searchEl = document.getElementById('citySearch');
+      let resultsEl = document.getElementById('cityResults');
+
+      function renderResults(q) {
+        resultsEl.innerHTML = '';
+        q = normName(q.trim());
+        if (!q) { resultsEl.style.display = 'none'; return; }
+        let starts = [], contains = [];
+        for (let c of cities) {
+          let n = normName(c.city);
+          if (n.indexOf(q) === 0) starts.push(c);
+          else if (n.indexOf(q) >= 0 || normName(c.zone).indexOf(q) >= 0) contains.push(c);
+        }
+        let hits = starts.concat(contains).slice(0, 8);
+        if (!hits.length) { resultsEl.style.display = 'none'; return; }
+        let nameCount = {};
+        for (let hcity of hits) nameCount[hcity.city] = (nameCount[hcity.city] || 0) + 1;
+        for (let c of hits) {
+          let b = document.createElement('button');
+          b.className = 'chip';
+          b.textContent = nameCount[c.city] > 1 ? c.city + ' (' + c.region.replace(/_/g, ' ') + ')' : c.city;
+          b.addEventListener('click', function () {
+            zone = c.zone;
+            cityName = c.city;
+            searchEl.value = c.city;
+            resultsEl.style.display = 'none';
+            resultsEl.innerHTML = '';
+            updateTitle();
+            if (started) resetClock();
+          });
+          resultsEl.appendChild(b);
+        }
+        resultsEl.style.display = 'flex';
+      }
+
+      searchEl.addEventListener('input', function () { renderResults(searchEl.value); });
+      searchEl.addEventListener('focus', function () { renderResults(searchEl.value); });
+      searchEl.value = cityName;
+      updateTitle();
+
+      document.getElementById('aspectRatioSelect').addEventListener('change', function () {
+        updateCanvasSize();
+        if (started) resetClock();
+      });
+
+      document.getElementById('segMode').addEventListener('click', function (e) {
+        let b = e.target.closest('button');
+        if (!b || (b.dataset.mode === 'dark') === darkMode) return;
+        darkMode = b.dataset.mode === 'dark';
+        let btns = document.querySelectorAll('#segMode button');
+        for (let btn of btns) btn.classList.toggle('on', btn === b);
+        document.body.classList.toggle('dark', darkMode);
+        // glyph textures repaint lazily on next display via the color check in getGlyph
+      });
+    })();
 </script>
 </body>
 </html>
