@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gravity Clock</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext x='16' y='25' font-size='26' text-anchor='middle'%3E%E2%8F%B1%3C/text%3E%3C/svg%3E" />
+<style>
+  :root {
+    --ink: #000;
+    --paper: #fff;
+    --muted: #b3b3b3;
+    --hair: #000;
+    --ui: 13px;
+  }
+  body.dark {
+    --ink: #fff;
+    --paper: #000;
+    --hair: #fff;
+    --muted: #4d4d4d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: var(--ui);
+    font-weight: 400;
+    line-height: 1.35;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  ::selection { background: var(--ink); color: var(--paper); }
+
+  /* ---------- shell ---------- */
+  .app { display: grid; grid-template-rows: 52px 1fr; height: 100vh; }
+  .topbar { display: flex; align-items: center; gap: 14px; padding: 0 14px; }
+  .topbar .spacer { flex: 1; }
+  .wordmark { letter-spacing: 0.02em; }
+  .readout { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+
+  .body { display: grid; grid-template-columns: 292px 1fr; min-height: 0; border-top: 1px solid var(--hair); }
+  .col { min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .col.left { border-right: 1px solid var(--hair); }
+  .col::-webkit-scrollbar { width: 9px; }
+  .col::-webkit-scrollbar-thumb { background: #d8d8d8; border-radius: 999px; }
+
+  /* ---------- panels ---------- */
+  .panel { border: 1px solid var(--hair); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .phead { display: flex; align-items: center; gap: 8px; }
+
+  /* ---------- controls ---------- */
+  .seg { display: flex; border: 1px solid var(--hair); border-radius: 999px; overflow: hidden; }
+  .seg button { flex: 1; border: 0; background: var(--paper); padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+  .seg button + button { border-left: 1px solid var(--hair); }
+  .seg button.on { background: var(--ink); color: var(--paper); }
+
+  .field { border: 1px solid var(--hair); border-radius: 10px; padding: 8px 10px; background: var(--paper); width: 100%; outline: none; }
+  .field::placeholder { color: var(--muted); }
+
+  .selwrap { position: relative; }
+  .selwrap select { -webkit-appearance: none; appearance: none; cursor: pointer; padding-right: 28px; }
+  .selwrap .caret { position: absolute; right: 12px; top: 50%; transform: translateY(-50%) rotate(90deg); pointer-events: none; }
+
+  .results { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--hair); background: var(--paper); border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+  .chip:hover { background: var(--ink); color: var(--paper); }
+
+  .credit { margin-top: auto; padding: 2px; color: var(--ink); text-decoration: none; }
+  .credit:hover { text-decoration: underline; }
+
+  /* ---------- stage ---------- */
+  .stage { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 22px; min-width: 0; min-height: 0; }
+  #cv { border: 1px solid var(--hair); display: block; }
+
+  @media (max-width: 720px) {
+    .body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    .col.left { border-right: 0; border-bottom: 1px solid var(--hair); overflow-y: visible; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="topbar">
+    <div class="wordmark" id="title">Gravity Clock</div>
+    <div class="spacer"></div>
+    <div class="readout" id="readout">00:00:00:0:0:0</div>
+  </div>
+
+  <div class="body">
+
+    <!-- ============ left column ============ -->
+    <aside class="col left">
+
+      <section class="panel">
+        <div class="phead">City</div>
+        <input class="field" id="citySearch" type="text" placeholder="Search for a city" autocomplete="off" spellcheck="false" />
+        <div class="results" id="cityResults" style="display:none"></div>
+      </section>
+
+      <section class="panel">
+        <div class="phead">Aspect ratio</div>
+        <div class="selwrap">
+          <select class="field" id="aspect">
+            <option value="16:9" selected>16:9 — Horizontal</option>
+            <option value="9:16">9:16 — Vertical</option>
+            <option value="1:1">1:1 — Square</option>
+            <option value="4:3">4:3 — Horizontal</option>
+            <option value="3:4">3:4 — Vertical</option>
+            <option value="5:4">5:4 — Horizontal</option>
+            <option value="4:5">4:5 — Vertical</option>
+          </select>
+          <span class="caret">›</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="phead">Mode</div>
+        <div class="seg" id="segMode">
+          <button class="on" data-mode="light">Light</button>
+          <button data-mode="dark">Dark</button>
+        </div>
+      </section>
+
+      <a class="credit" href="https://zachreich.com" target="_blank" rel="noopener">©Zach Reich, 2026</a>
+    </aside>
+
+    <!-- ============ stage ============ -->
+    <main class="stage" id="stage">
+      <canvas id="cv"></canvas>
+    </main>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ================= configuration ================= */
+
+  var GRAVITY = 3.0;                 // default gravity
+  var FILL = 0.92;                   // fraction of canvas area the pile reaches by the end of a minute
+  var CATCHUP_MS = 800;              // events older than this settle instantly instead of animating
+
+  // Piece sizes as a fraction of sqrt(canvas area).
+  // Seconds 5%, tenths 1%; hundredths and thousandths smaller still.
+  var REL = { sec: 0.05, tenth: 0.01, hund: 0.0045, thou: 0.0032 };
+
+  // Thousandths are batched (one piece per 4 ms) so the simulation never
+  // has to spawn 1000 pieces per second; settled pieces are stamped onto an
+  // offscreen pile canvas so only airborne pieces are ever simulated/drawn.
+  var PERIOD = { sec: 1000, tenth: 100, hund: 10, thou: 4 };
+  var COUNT = { sec: 60, tenth: 600, hund: 6000, thou: 15000 };
+
+  var FONT = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+  var COLW = 2; // heightfield column width, css px
+
+  /* ================= dom ================= */
+
+  var cv = document.getElementById("cv");
+  var ctx = cv.getContext("2d");
+  var stage = document.getElementById("stage");
+  var titleEl = document.getElementById("title");
+  var readoutEl = document.getElementById("readout");
+  var searchEl = document.getElementById("citySearch");
+  var resultsEl = document.getElementById("cityResults");
+  var aspectEl = document.getElementById("aspect");
+  var segMode = document.getElementById("segMode");
+
+  var dpr = Math.max(1, window.devicePixelRatio || 1);
+  var dark = false;
+
+  function ink() { return dark ? "#fff" : "#000"; }
+
+  /* ================= time zones ================= */
+
+  var zones = [];
+  try { zones = Intl.supportedValuesOf("timeZone"); } catch (e) {
+    zones = ["America/New_York","America/Chicago","America/Denver","America/Los_Angeles",
+      "America/Sao_Paulo","Europe/London","Europe/Paris","Europe/Berlin","Europe/Madrid",
+      "Europe/Rome","Europe/Moscow","Africa/Cairo","Africa/Lagos","Africa/Johannesburg",
+      "Asia/Dubai","Asia/Karachi","Asia/Kolkata","Asia/Bangkok","Asia/Shanghai",
+      "Asia/Singapore","Asia/Hong_Kong","Asia/Tokyo","Asia/Seoul","Australia/Sydney",
+      "Pacific/Auckland","Pacific/Honolulu"];
+  }
+  var cities = [];
+  for (var zi = 0; zi < zones.length; zi++) {
+    var z = zones[zi];
+    if (z.indexOf("/") < 0 || z.indexOf("Etc/") === 0) continue;
+    var segs = z.split("/");
+    cities.push({ zone: z, city: segs[segs.length - 1].replace(/_/g, " "), region: segs[0] });
+  }
+
+  var zone = "UTC", cityName = "UTC";
+  try {
+    zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch (e) {}
+  (function () {
+    for (var i = 0; i < cities.length; i++) {
+      if (cities[i].zone === zone) { cityName = cities[i].city; return; }
+    }
+    cityName = zone.split("/").pop().replace(/_/g, " ");
+  })();
+
+  var fmtCache = {};
+  function zoneFmt(tz) {
+    if (!fmtCache[tz]) {
+      fmtCache[tz] = new Intl.DateTimeFormat("en-GB", {
+        timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+      });
+    }
+    return fmtCache[tz];
+  }
+  function zoneTime() {
+    var now = new Date();
+    var h = 0, m = 0, s = 0;
+    try {
+      var parts = zoneFmt(zone).formatToParts(now);
+      for (var i = 0; i < parts.length; i++) {
+        var p = parts[i];
+        if (p.type === "hour") h = +p.value;
+        else if (p.type === "minute") m = +p.value;
+        else if (p.type === "second") s = +p.value;
+      }
+    } catch (e) {
+      h = now.getHours(); m = now.getMinutes(); s = now.getSeconds();
+    }
+    return { h: h, m: m, s: s, ms: now.getMilliseconds(), key: zone + " " + h + ":" + m };
+  }
+
+  /* ================= city search ================= */
+
+  function renderResults(q) {
+    resultsEl.innerHTML = "";
+    q = q.trim().toLowerCase();
+    if (!q) { resultsEl.style.display = "none"; return; }
+    var starts = [], contains = [];
+    for (var i = 0; i < cities.length; i++) {
+      var lc = cities[i].city.toLowerCase();
+      if (lc.indexOf(q) === 0) starts.push(cities[i]);
+      else if (lc.indexOf(q) >= 0 || cities[i].zone.toLowerCase().indexOf(q) >= 0) contains.push(cities[i]);
+    }
+    var hits = starts.concat(contains).slice(0, 8);
+    if (!hits.length) { resultsEl.style.display = "none"; return; }
+    var nameCount = {};
+    for (var j = 0; j < hits.length; j++) nameCount[hits[j].city] = (nameCount[hits[j].city] || 0) + 1;
+    hits.forEach(function (c) {
+      var b = document.createElement("button");
+      b.className = "chip";
+      b.textContent = nameCount[c.city] > 1 ? c.city + " (" + c.region.replace(/_/g, " ") + ")" : c.city;
+      b.addEventListener("click", function () {
+        zone = c.zone; cityName = c.city;
+        searchEl.value = c.city;
+        resultsEl.style.display = "none";
+        resultsEl.innerHTML = "";
+        updateTitle();
+        resetSim();
+      });
+      resultsEl.appendChild(b);
+    });
+    resultsEl.style.display = "flex";
+  }
+  searchEl.addEventListener("input", function () { renderResults(searchEl.value); });
+  searchEl.addEventListener("focus", function () { renderResults(searchEl.value); });
+
+  function updateTitle() { titleEl.textContent = "Gravity Clock: " + cityName; }
+  updateTitle();
+
+  /* ================= mode & aspect ================= */
+
+  segMode.addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b || (b.dataset.mode === "dark") === dark) return;
+    dark = b.dataset.mode === "dark";
+    var btns = segMode.querySelectorAll("button");
+    for (var i = 0; i < btns.length; i++) btns[i].classList.toggle("on", btns[i] === b);
+    document.body.classList.toggle("dark", dark);
+    recolorAll();
+  });
+
+  aspectEl.addEventListener("change", function () { layout(); resetSim(); });
+
+  /* ================= canvas layout ================= */
+
+  var W = 0, H = 0;
+
+  function layout() {
+    var parts = aspectEl.value.split(":");
+    var ar = (+parts[0]) / (+parts[1]);
+    var availW = Math.max(60, stage.clientWidth - 44);
+    var availH = Math.max(60, stage.clientHeight - 44);
+    var w = availW, h = w / ar;
+    if (h > availH) { h = availH; w = h * ar; }
+    W = Math.round(w); H = Math.round(h);
+    cv.style.width = W + "px";
+    cv.style.height = H + "px";
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { layout(); resetSim(); }, 120);
+  });
+
+  /* ================= sprites & measurement ================= */
+
+  var measCanvas = document.createElement("canvas");
+  var meas = measCanvas.getContext("2d");
+
+  function measureText(text, px) {
+    meas.font = px + "px " + FONT;
+    var m = meas.measureText(text);
+    var asc = m.actualBoundingBoxAscent || px * 0.72;
+    var desc = m.actualBoundingBoxDescent || px * 0.02;
+    return { w: m.width, asc: asc, desc: desc, h: asc + desc };
+  }
+
+  // Font px whose ink height equals targetH.
+  function fontForHeight(sample, targetH) {
+    var m = measureText(sample, 100);
+    return 100 * targetH / m.h;
+  }
+
+  function makeSprite(text, px, stroke, withProfile) {
+    var m = measureText(text, px);
+    var pad = stroke ? 2 : 1;
+    var w = Math.max(1, Math.ceil(m.w) + pad * 2);
+    var h = Math.max(1, Math.ceil(m.h) + pad * 2);
+    var c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w * dpr));
+    c.height = Math.max(1, Math.round(h * dpr));
+    var g = c.getContext("2d");
+    g.scale(dpr, dpr);
+    g.font = px + "px " + FONT;
+    if (stroke) {
+      g.lineWidth = 1;
+      g.strokeStyle = ink();
+      g.strokeText(text, pad, pad + m.asc);
+    } else {
+      g.fillStyle = ink();
+      g.fillText(text, pad, pad + m.asc);
+    }
+    var sprite = { canvas: c, w: w, h: h };
+    if (withProfile) {
+      var ncols = Math.ceil(w / COLW);
+      var prof = new Array(ncols);
+      var data = g.getImageData(0, 0, c.width, c.height).data;
+      for (var i = 0; i < ncols; i++) {
+        var x0 = Math.round(i * COLW * dpr);
+        var x1 = Math.min(c.width, Math.round((i + 1) * COLW * dpr));
+        var top = h;
+        outer:
+        for (var y = 0; y < c.height; y++) {
+          for (var x = x0; x < x1; x++) {
+            if (data[(y * c.width + x) * 4 + 3] > 24) { top = y / dpr; break outer; }
+          }
+        }
+        prof[i] = top;
+      }
+      sprite.profile = prof;
+    }
+    return sprite;
+  }
+
+  /* ================= simulation state ================= */
+
+  var cols = [];              // heightfield: filled height per column, from the bottom
+  var pile = null, pileCtx = null;   // settled pieces, stamped once
+  var dropping = null;        // previous minute's pile falling away { canvas, y, vy }
+  var active = [];            // airborne pieces
+  var counters = { sec: 0, tenth: 0, hund: 0, thou: 0 };
+  var bigSpawned = false;
+  var minuteKey = null;
+  var sizes = null;           // per-layout piece sizing
+  var spriteCache = {};
+
+  function newLayer() {
+    var c = document.createElement("canvas");
+    c.width = cv.width; c.height = cv.height;
+    var g = c.getContext("2d");
+    g.scale(dpr, dpr);
+    return { canvas: c, g: g };
+  }
+
+  function computeSizes() {
+    var D = Math.sqrt(W * H);
+    var secH = REL.sec * D;
+    var secFont = fontForHeight("44", secH);
+    var secW = measureText("44", secFont).w;
+    var tenthH = REL.tenth * D;
+    var tenthFont = fontForHeight("4", tenthH);
+    var tenthW = measureText("4", tenthFont).w;
+    var hundS = REL.hund * D;
+    var thouS = REL.thou * D;
+
+    var small =
+      COUNT.sec * secW * secH +
+      COUNT.tenth * tenthW * tenthH +
+      COUNT.hund * hundS * hundS +
+      COUNT.thou * thouS * thouS;
+
+    var remain = Math.max(FILL * W * H - small, 0.1 * W * H);
+    var target = remain / 2; // per big number
+    var m100 = measureText("44", 100);
+    var bigFont = 100 * Math.sqrt(target / (m100.w * m100.h));
+    // keep a single number from spanning the full canvas
+    var maxW = W * 0.9, maxH = H * 0.6;
+    bigFont = Math.min(bigFont, 100 * maxW / m100.w, 100 * maxH / m100.h);
+
+    sizes = { secFont: secFont, tenthFont: tenthFont, hundS: hundS, thouS: thouS, bigFont: bigFont };
+  }
+
+  function resetSim() {
+    computeSizes();
+    spriteCache = {};
+    cols = new Array(Math.max(1, Math.ceil(W / COLW)));
+    for (var i = 0; i < cols.length; i++) cols[i] = 0;
+    var layer = newLayer();
+    pile = layer.canvas; pileCtx = layer.g;
+    dropping = null;
+    active = [];
+    counters = { sec: 0, tenth: 0, hund: 0, thou: 0 };
+    bigSpawned = false;
+    minuteKey = null; // forces a quiet rebuild on the next frame
+  }
+
+  function rollover(animate) {
+    if (animate && pile) {
+      dropping = { canvas: pile, y: 0, vy: 0 };
+    }
+    var layer = newLayer();
+    pile = layer.canvas; pileCtx = layer.g;
+    for (var i = 0; i < cols.length; i++) cols[i] = 0;
+    counters = { sec: 0, tenth: 0, hund: 0, thou: 0 };
+    bigSpawned = false;
+  }
+
+  /* ================= pieces ================= */
+
+  // Pieces tumble into the lowest hollow near where they were dropped,
+  // so the pile packs evenly instead of growing spires.
+  function bestX(p, win) {
+    var step = Math.max(COLW, Math.min(p.w, 12));
+    var lo = Math.max(0, p.x - win);
+    var hi = Math.max(lo, Math.min(W - p.w, p.x + win));
+    var xs = [], hs = [], hmin = Infinity;
+    for (var x = lo; x <= hi; x += step) {
+      var c0 = Math.max(0, Math.floor(x / COLW));
+      var c1 = Math.min(cols.length - 1, Math.ceil((x + p.w) / COLW) - 1);
+      var hmax = 0;
+      for (var i = c0; i <= c1; i++) if (cols[i] > hmax) hmax = cols[i];
+      xs.push(x); hs.push(hmax);
+      if (hmax < hmin) hmin = hmax;
+    }
+    var tol = p.big ? 6 : Math.max(2, p.h);
+    var picks = [];
+    for (var j = 0; j < xs.length; j++) if (hs[j] <= hmin + tol) picks.push(xs[j]);
+    return picks.length ? picks[(Math.random() * picks.length) | 0] : p.x;
+  }
+
+  function landingY(p) {
+    var c0 = Math.max(0, Math.floor(p.x / COLW));
+    var c1 = Math.min(cols.length - 1, Math.ceil((p.x + p.w) / COLW) - 1);
+    var hmax = 0;
+    for (var i = c0; i <= c1; i++) if (cols[i] > hmax) hmax = cols[i];
+    return H - hmax - p.h;
+  }
+
+  function settle(p) {
+    var y = landingY(p);
+    var c0 = Math.max(0, Math.floor(p.x / COLW));
+    var c1 = Math.min(cols.length - 1, Math.ceil((p.x + p.w) / COLW) - 1);
+    if (p.sprite) {
+      pileCtx.drawImage(p.sprite.canvas, p.x, y, p.w, p.h);
+      var prof = p.sprite.profile;
+      for (var i = c0; i <= c1; i++) {
+        var off = prof ? prof[Math.min(prof.length - 1, i - c0)] : 0;
+        var hNew = H - (y + off);
+        if (hNew > cols[i]) cols[i] = Math.min(H, hNew);
+      }
+    } else {
+      pileCtx.fillStyle = ink();
+      pileCtx.fillRect(p.x, y, p.w, p.h);
+      for (var j = c0; j <= c1; j++) {
+        var hn = H - y;
+        if (hn > cols[j]) cols[j] = Math.min(H, hn);
+      }
+    }
+  }
+
+  function addPiece(p, instant) {
+    p.x = bestX(p, p.big ? W * 0.12 : Math.max(60, p.w * 8));
+    if (instant) { settle(p); }
+    else { p.y = -p.h; p.vy = 0; active.push(p); }
+  }
+
+  function cachedSprite(key, text, px, stroke) {
+    var k = key + ":" + text + (stroke ? ":o" : "");
+    if (!spriteCache[k]) spriteCache[k] = makeSprite(text, px, stroke, false);
+    return spriteCache[k];
+  }
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+  function spawnBig(zt, instant) {
+    var equal = zt.h === zt.m;
+    var hourS = makeSprite(pad2(zt.h), sizes.bigFont, false, true);
+    // when hour and minute match, the minute keeps its full size but is
+    // rendered as a 1px outline to tell the two apart
+    var minS = makeSprite(pad2(zt.m), sizes.bigFont, equal, true);
+    var hx = Math.min(Math.max(0, Math.random() * Math.max(1, W / 2 - hourS.w * 0.7)), Math.max(0, W - hourS.w));
+    var hourP = { x: hx, w: hourS.w, h: hourS.h, sprite: hourS, big: true };
+    addPiece(hourP, instant);
+    // minute lands to the right of the hour; on narrow canvases it stacks on top
+    var mx = Math.min(Math.max(0, hourP.x + hourS.w + W * 0.02), Math.max(0, W - minS.w));
+    addPiece({ x: mx, w: minS.w, h: minS.h, sprite: minS, big: true }, instant);
+  }
+
+  function spawnUnit(unit, k, instant) {
+    var p;
+    if (unit === "sec") {
+      var s = cachedSprite("s", pad2(k), sizes.secFont, false);
+      p = { x: Math.random() * Math.max(1, W - s.w), w: s.w, h: s.h, sprite: s };
+    } else if (unit === "tenth") {
+      var t = cachedSprite("t", String(k % 10), sizes.tenthFont, false);
+      p = { x: Math.random() * Math.max(1, W - t.w), w: t.w, h: t.h, sprite: t };
+    } else {
+      var side = unit === "hund" ? sizes.hundS : sizes.thouS;
+      p = { x: Math.random() * Math.max(1, W - side), w: side, h: side };
+    }
+    addPiece(p, instant);
+  }
+
+  function emitDue(zt, target) {
+    if (!bigSpawned) { spawnBig(zt, target > CATCHUP_MS); bigSpawned = true; }
+    for (var unit in PERIOD) {
+      var P = PERIOD[unit];
+      while (counters[unit] < COUNT[unit] && counters[unit] * P <= target) {
+        spawnUnit(unit, counters[unit], target - counters[unit] * P > CATCHUP_MS);
+        counters[unit]++;
+      }
+    }
+  }
+
+  /* ================= recolor (mode switch) ================= */
+
+  function recolorLayer(c) {
+    var g = c.getContext("2d");
+    g.save();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = "source-in";
+    g.fillStyle = ink();
+    g.fillRect(0, 0, c.width, c.height);
+    g.restore();
+  }
+
+  function recolorAll() {
+    if (pile) recolorLayer(pile);
+    if (dropping) recolorLayer(dropping.canvas);
+    for (var k in spriteCache) recolorLayer(spriteCache[k].canvas);
+    for (var i = 0; i < active.length; i++) {
+      if (active[i].sprite && !spriteCache[keyOf(active[i])]) recolorLayer(active[i].sprite.canvas);
+    }
+  }
+  function keyOf() { return " "; } // big sprites are never cached; always recolor them
+
+  /* ================= main loop ================= */
+
+  var lastT = performance.now();
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    var dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+
+    var zt = zoneTime();
+    readoutEl.textContent =
+      pad2(zt.h) + ":" + pad2(zt.m) + ":" + pad2(zt.s) + ":" +
+      Math.floor(zt.ms / 100) + ":" + (Math.floor(zt.ms / 10) % 10) + ":" + (zt.ms % 10);
+
+    if (zt.key !== minuteKey) {
+      rollover(minuteKey !== null);
+      minuteKey = zt.key;
+    }
+    emitDue(zt, zt.s * 1000 + zt.ms);
+
+    var acc = GRAVITY * 1.2 * H;
+    if (dropping) {
+      dropping.vy += acc * dt;
+      dropping.y += dropping.vy * dt;
+      if (dropping.y > H) dropping = null;
+    }
+    for (var i = active.length - 1; i >= 0; i--) {
+      var p = active[i];
+      p.vy += acc * dt;
+      p.y += p.vy * dt;
+      if (p.y >= landingY(p)) {
+        // re-tumble against the field as it is now, not as it was at spawn
+        if (!p.big) p.x = bestX(p, Math.max(24, p.w * 4));
+        settle(p);
+        active.splice(i, 1);
+      }
+    }
+
+    ctx.clearRect(0, 0, W, H);
+    if (dropping) ctx.drawImage(dropping.canvas, 0, dropping.y, W, H);
+    ctx.drawImage(pile, 0, 0, W, H);
+    for (var j = 0; j < active.length; j++) {
+      var q = active[j];
+      if (q.sprite) ctx.drawImage(q.sprite.canvas, q.x, q.y, q.w, q.h);
+      else { ctx.fillStyle = ink(); ctx.fillRect(q.x, q.y, q.w, q.h); }
+    }
+  }
+
+  /* ================= boot ================= */
+
+  layout();
+  resetSim();
+  searchEl.value = cityName;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
