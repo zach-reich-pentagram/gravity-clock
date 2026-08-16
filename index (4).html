@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gravity Kinetic Clock</title>
+
+  <!-- convex decomposition for concave physics bodies -->
+  <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
+
+  <!-- p5.js and Matter.js CDNs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #f0f0f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+    }
+
+    /* Left Sidebar Panel */
+    #sidebar {
+      width: 320px;
+      height: 100vh;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      box-sizing: border-box;
+      padding: 20px;
+      overflow-y: auto;
+      z-index: 10;
+      box-shadow: 4px 0 15px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    h2 {
+      margin-top: 0;
+      font-size: 1.3rem;
+      border-bottom: 1px solid #333;
+      padding-bottom: 10px;
+      color: #fff;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    label {
+      font-size: 0.85rem;
+      color: #b0b0b0;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    input[type="text"], select {
+      background: #2a2a2a;
+      border: 1px solid #444;
+      color: #fff;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      outline: none;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: #3b82f6;
+    }
+
+    button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.9rem;
+      transition: background 0.2s;
+    }
+
+    button:hover {
+      background: #2563eb;
+    }
+
+    .info-note {
+      font-size: 0.75rem;
+      color: #6b7280;
+      line-height: 1.4;
+    }
+
+    /* Right Main Canvas Area with CSS Centering */
+    #canvas-container {
+      flex-grow: 1;
+      height: 100vh;
+      background-color: #e5e5e5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Controls Panel -->
+  <div id="sidebar">
+    <h2>Gravity Kinetic Clock</h2>
+
+    <!-- Time Setting -->
+    <div class="control-group">
+      <label for="timeInput">Set Time (HH:MM:SS.T)</label>
+      <input type="text" id="timeInput" value="4:33:00.0" placeholder="4:33:00.0">
+      <button id="setTimeBtn" onclick="applyInputTime()">Apply / Restart</button>
+    </div>
+
+    <hr style="border-color: #333; margin: 10px 0;">
+
+    <!-- Physics Settings -->
+    <div class="control-group">
+      <label>Gravity: <span id="val-gravity">1.0</span></label>
+      <input type="range" id="gravitySlider" min="0" max="5" step="0.1" value="1.0" oninput="updatePhysicsValues()">
+    </div>
+
+    <div class="control-group">
+      <label>Bounciness: <span id="val-bounce">0.2</span></label>
+      <input type="range" id="bouncinessSlider" min="0" max="1" step="0.05" value="0.2" oninput="updatePhysicsValues()">
+    </div>
+
+    <hr style="border-color: #333; margin: 10px 0;">
+
+    <!-- Relative Sizes (% of Canvas Height) -->
+    <div class="control-group">
+      <label>Tenths Size: <span id="val-tenths">2%</span></label>
+      <input type="range" id="tenthsSizeSlider" min="1" max="15" step="0.5" value="2">
+    </div>
+
+    <div class="control-group">
+      <label>Seconds Size: <span id="val-seconds">7%</span></label>
+      <input type="range" id="secondsSizeSlider" min="5" max="25" step="0.5" value="7">
+    </div>
+
+    <div class="control-group">
+      <label>Minutes Size: <span id="val-minutes">25%</span></label>
+      <input type="range" id="minutesSizeSlider" min="10" max="35" step="0.5" value="25">
+    </div>
+
+    <div class="control-group">
+      <label>Hours Size: <span id="val-hours">40%</span></label>
+      <input type="range" id="hoursSizeSlider" min="15" max="50" step="0.5" value="40">
+    </div>
+
+    <hr style="border-color: #333; margin: 10px 0;">
+
+    <!-- Custom Aesthetics -->
+    <div class="control-group">
+      <label for="aspectRatioSelect">Aspect Ratio</label>
+      <select id="aspectRatioSelect" onchange="toggleCustomRatioDisplay(); updateCanvasSize();">
+        <option value="9:16" selected>9:16</option>
+        <option value="16:9">16:9</option>
+        <option value="4:3">4:3</option>
+        <option value="1:1">1:1</option>
+        <option value="fill">Fill Screen</option>
+        <option value="custom">Custom</option>
+      </select>
+    </div>
+
+    <!-- Hidden custom aspect ratio fields -->
+    <div id="customRatioDiv" class="control-group" style="display: none; flex-direction: row; gap: 8px;">
+      <div style="flex: 1;">
+        <label>Ratio X</label>
+        <input type="text" id="customRatioX" value="9" style="width: 100%; box-sizing: border-box;" oninput="updateCanvasSize()">
+      </div>
+      <div style="flex: 1;">
+        <label>Ratio Y</label>
+        <input type="text" id="customRatioY" value="16" style="width: 100%; box-sizing: border-box;" oninput="updateCanvasSize()">
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label for="bgColorPicker">Background Color</label>
+      <input type="color" id="bgColorPicker" value="#ffffff" style="width:100%; height:35px; border:none; border-radius:4px; cursor:pointer;">
+    </div>
+
+    <div class="control-group">
+      <label for="numberColorPicker">Number Color</label>
+      <input type="color" id="numberColorPicker" value="#000000" style="width:100%; height:35px; border:none; border-radius:4px; cursor:pointer;" oninput="onNumberColorChange()">
+    </div>
+
+    <div class="control-group" style="flex-direction: row; gap: 8px; align-items: center;">
+      <input type="checkbox" id="canvasBorderCheck" checked style="cursor:pointer;">
+      <label for="canvasBorderCheck" style="cursor:pointer; font-size: 0.85rem;">Canvas Outline (Stroke)</label>
+    </div>
+
+    <div class="control-group" style="flex-direction: row; gap: 8px; align-items: center; margin-top: -5px;">
+      <input type="checkbox" id="showDebugCheck" style="cursor:pointer;">
+      <label for="showDebugCheck" style="cursor:pointer; font-size: 0.85rem; color: #f87171;">Show Physics Outlines (Debug)</label>
+    </div>
+
+    <hr style="border-color: #333; margin: 10px 0;">
+
+    <div class="info-note">
+      Numbers are rendered in Helvetica (Arial fallback) and vectorized automatically.
+      Hours &amp; minutes get pixel-accurate concave collision; seconds &amp; tenths use fast rectangles.
+    </div>
+  </div>
+
+  <!-- p5.js Render Canvas Container -->
+  <div id="canvas-container"></div>
+
+  <!-- JavaScript Implementation -->
+  <script>
+    let Engine = Matter.Engine,
+        Composite = Matter.Composite,
+        Bodies = Matter.Bodies,
+        Body = Matter.Body;
+
+    let engine, world;
+    let numbers = [];
+    let floorBody, wallLeft, wallRight;
+
+    // Simulated Clock State
+    let simHour = 4;
+    let simMinute = 33;
+    let simSecond = 0;
+    let simTenth = 0;
+    let accumMs = 0;
+
+    let dropping = false;
+
+    // fixed physics timestep: matter.js is not framerate independent, and feeding it
+    // a varying dt is a major source of pile jitter. 120hz = 2 steps per 60fps frame
+    const PHYS_DT = 1000 / 120;
+    let physAccumMs = 0;
+
+    const FONT_STACK = 'Helvetica, "Helvetica Neue", Arial, sans-serif';
+    const GLYPH_FONT_PX = 512;  // raster resolution for textures
+    const GLYPH_PAD = 12;       // px padding around glyph raster
+    const TRACE_H = 220;        // downsampled height for contour tracing
+    let glyphCache = {};        // val -> { canvas, contours, contourBounds, tightW, tightH, color, drawX, drawY, str }
+
+    // Set decomp globally so Matter.js can perform convex decomposition on concave shapes
+    function registerDecomp() {
+      let d = typeof decomp !== 'undefined' ? decomp : (typeof polyDecomp !== 'undefined' ? polyDecomp : null);
+      if (d) {
+        window.decomp = d;
+        Matter.Common.setDecomp(d);
+      }
+    }
+    registerDecomp();
+
+    // ---------- geometry helpers ----------
+
+    // ramer-douglas-peucker simplification
+    function distanceToLine(p, p1, p2) {
+      let l2 = (p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2;
+      if (l2 === 0) return Math.hypot(p.x - p1.x, p.y - p1.y);
+      let t = ((p.x - p1.x) * (p2.x - p1.x) + (p.y - p1.y) * (p2.y - p1.y)) / l2;
+      t = Math.max(0, Math.min(1, t));
+      return Math.hypot(p.x - (p1.x + t * (p2.x - p1.x)), p.y - (p1.y + t * (p2.y - p1.y)));
+    }
+
+    function rdpSimplify(points, epsilon) {
+      if (points.length < 3) return points;
+      let dmax = 0;
+      let index = 0;
+      let end = points.length - 1;
+      for (let i = 1; i < end; i++) {
+        let d = distanceToLine(points[i], points[0], points[end]);
+        if (d > dmax) {
+          index = i;
+          dmax = d;
+        }
+      }
+      if (dmax > epsilon) {
+        let r1 = rdpSimplify(points.slice(0, index + 1), epsilon);
+        let r2 = rdpSimplify(points.slice(index), epsilon);
+        return r1.slice(0, r1.length - 1).concat(r2);
+      }
+      return [points[0], points[end]];
+    }
+
+    // clockwise moore neighborhood: N NE E SE S SW W NW
+    const MOORE_NB = [[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1]];
+
+    // moore-neighbor boundary tracing with jacob's stopping criterion.
+    // traces only the outer boundary of a component; interior holes are skipped
+    // intentionally since nothing can pile inside an enclosed counter anyway
+    function mooreTrace(isFg, sx, sy, maxSteps) {
+      let contour = [{ x: sx, y: sy }];
+      // raster scan order guarantees the west neighbor of the start pixel is background
+      let bx = sx - 1, by = sy;
+      let cx = sx, cy = sy;
+      let firstBx = bx, firstBy = by;
+      for (let step = 0; step < maxSteps; step++) {
+        let bi = -1;
+        for (let k = 0; k < 8; k++) {
+          if (cx + MOORE_NB[k][0] === bx && cy + MOORE_NB[k][1] === by) { bi = k; break; }
+        }
+        if (bi === -1) break;
+        let found = false;
+        for (let k = 1; k <= 8; k++) {
+          let idx = (bi + k) % 8;
+          let nx = cx + MOORE_NB[idx][0], ny = cy + MOORE_NB[idx][1];
+          if (isFg(nx, ny)) {
+            // new backtrack = last background cell checked before this hit
+            let pIdx = (idx + 7) % 8;
+            bx = cx + MOORE_NB[pIdx][0];
+            by = cy + MOORE_NB[pIdx][1];
+            cx = nx; cy = ny;
+            found = true;
+            break;
+          }
+        }
+        if (!found) break; // isolated pixel
+        if (cx === sx && cy === sy && bx === firstBx && by === firstBy) break;
+        contour.push({ x: cx, y: cy });
+      }
+      return contour;
+    }
+
+    // extract simplified outer contours (one per connected component) from a binary grid
+    function traceBinaryGrid(grid, gw, gh, epsilon) {
+      let visited = new Uint8Array(gw * gh);
+      let contours = [];
+      let stack = [];
+      let isFg = (px, py) => px >= 0 && py >= 0 && px < gw && py < gh && grid[py * gw + px] === 1;
+
+      for (let y = 1; y < gh - 1; y++) {
+        for (let x = 1; x < gw - 1; x++) {
+          let i = y * gw + x;
+          if (!grid[i] || visited[i]) continue;
+
+          let contour = mooreTrace(isFg, x, y, gw * gh * 4);
+
+          // flood-mark the whole component so it only gets traced once
+          stack.length = 0;
+          stack.push(i);
+          visited[i] = 1;
+          let area = 0;
+          while (stack.length) {
+            let ci = stack.pop();
+            area++;
+            let px = ci % gw, py = (ci / gw) | 0;
+            for (let k = 0; k < 8; k++) {
+              let nx = px + MOORE_NB[k][0], ny = py + MOORE_NB[k][1];
+              if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+              let ni = ny * gw + nx;
+              if (grid[ni] && !visited[ni]) { visited[ni] = 1; stack.push(ni); }
+            }
+          }
+
+          // ignore antialiasing specks
+          if (area < 12 || contour.length < 8) continue;
+          let simplified = rdpSimplify(contour, epsilon);
+          if (simplified.length >= 3) contours.push(simplified);
+        }
+      }
+      return contours;
+    }
+
+    // ---------- glyph generation (helvetica raster + traced collision contours) ----------
+
+    function renderGlyphTexture(glyph, colorHex) {
+      let ctx = glyph.canvas.getContext('2d');
+      ctx.clearRect(0, 0, glyph.canvas.width, glyph.canvas.height);
+      ctx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
+      ctx.fillStyle = colorHex;
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(glyph.str, glyph.drawX, glyph.drawY);
+      glyph.color = colorHex;
+    }
+
+    function getGlyph(val) {
+      let colorHex = getInputValue('numberColorPicker', '#000000');
+      let cached = glyphCache[val];
+      if (cached) {
+        // contours are color-independent; only the texture needs a repaint
+        if (cached.color !== colorHex) renderGlyphTexture(cached, colorHex);
+        return cached;
+      }
+
+      let str = String(val);
+      let canvas = document.createElement('canvas');
+      let ctx = canvas.getContext('2d');
+      ctx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
+      let m = ctx.measureText(str);
+
+      // tight bbox from actual metrics, fall back to loose estimate on ancient browsers
+      let left = Math.ceil(m.actualBoundingBoxLeft !== undefined ? m.actualBoundingBoxLeft : 0);
+      let right = Math.ceil(m.actualBoundingBoxRight !== undefined ? m.actualBoundingBoxRight : m.width);
+      let asc = Math.ceil(m.actualBoundingBoxAscent !== undefined ? m.actualBoundingBoxAscent : GLYPH_FONT_PX * 0.75);
+      let desc = Math.ceil(m.actualBoundingBoxDescent !== undefined ? m.actualBoundingBoxDescent : GLYPH_FONT_PX * 0.05);
+
+      let tightW = left + right;
+      let tightH = asc + desc;
+
+      canvas.width = tightW + 2 * GLYPH_PAD;
+      canvas.height = tightH + 2 * GLYPH_PAD;
+
+      let glyph = {
+        canvas: canvas,
+        str: str,
+        tightW: tightW,
+        tightH: tightH,
+        drawX: GLYPH_PAD + left,
+        drawY: GLYPH_PAD + asc,
+        color: null,
+        contours: [],
+        contourBounds: null
+      };
+
+      renderGlyphTexture(glyph, colorHex);
+
+      // downsample the raster and trace pixel-exact outer boundaries
+      let scale = TRACE_H / canvas.height;
+      let tw = Math.max(2, Math.round(canvas.width * scale));
+      let th = TRACE_H;
+      let tCanvas = document.createElement('canvas');
+      tCanvas.width = tw;
+      tCanvas.height = th;
+      let tCtx = tCanvas.getContext('2d');
+      tCtx.drawImage(canvas, 0, 0, tw, th);
+      let data = tCtx.getImageData(0, 0, tw, th).data;
+
+      // 1px empty border so tracing never runs off-grid
+      let gw = tw + 2, gh = th + 2;
+      let grid = new Uint8Array(gw * gh);
+      for (let y = 0; y < th; y++) {
+        for (let x = 0; x < tw; x++) {
+          if (data[(y * tw + x) * 4 + 3] > 100) grid[(y + 1) * gw + (x + 1)] = 1;
+        }
+      }
+
+      let traced = traceBinaryGrid(grid, gw, gh, 2.4);
+
+      // map trace-space points back to full-res raster coords
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (let c of traced) {
+        let mapped = c.map(p => ({ x: (p.x - 1) / scale, y: (p.y - 1) / scale }));
+        for (let p of mapped) {
+          if (p.x < minX) minX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y > maxY) maxY = p.y;
+        }
+        glyph.contours.push(mapped);
+      }
+      if (glyph.contours.length > 0) {
+        glyph.contourBounds = { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+      }
+
+      glyphCache[val] = glyph;
+      return glyph;
+    }
+
+    function onNumberColorChange() {
+      // textures repaint lazily via getGlyph on next display; nothing else needed
+    }
+
+    // build a single rigid compound from multiple (possibly disjoint, possibly concave) contours.
+    // note: passing multiple sets directly to Bodies.fromVertices re-centers each convex set
+    // onto the same point, which collapses multi-digit numbers -- so each contour gets its own
+    // body at its own centroid and the parts are merged manually
+    function compoundFromContours(sets, x, y, options) {
+      let parts = [];
+      for (let set of sets) {
+        let c = Matter.Vertices.centre(set);
+        let b = null;
+        try {
+          // options must be passed to the inner bodies too: matter resolves collisions
+          // using PART-level friction/restitution, not the parent's, so parts created
+          // with defaults would be near-frictionless and slide
+          b = Bodies.fromVertices(c.x, c.y, [set], options, true, 0.01, 10, 0.01);
+        } catch (e) {
+          b = null;
+        }
+        if (!b) continue;
+        let start = b.parts.length > 1 ? 1 : 0;
+        for (let i = start; i < b.parts.length; i++) parts.push(b.parts[i]);
+      }
+      if (parts.length === 0) return null;
+
+      let body = Body.create(Object.assign({ parts: parts }, options));
+
+      // record where glyph-space origin sits relative to the centroid before moving the body.
+      // body.bounds.min currently equals the min of all contour points in glyph coordinates
+      let cb = body.bounds;
+      let anchor = {
+        x: cb.min.x - body.position.x,
+        y: cb.min.y - body.position.y
+      };
+      Body.setPosition(body, { x: x, y: y });
+      return { body: body, anchor: anchor };
+    }
+
+    // ---------- ui helpers ----------
+
+    function getInputValue(id, fallback) {
+      let el = document.getElementById(id);
+      return el ? el.value : fallback;
+    }
+
+    function getInputFloat(id, fallback) {
+      let val = getInputValue(id, fallback);
+      let parsed = parseFloat(val);
+      return isNaN(parsed) ? fallback : parsed;
+    }
+
+    function toggleCustomRatioDisplay() {
+      let selectEl = document.getElementById('aspectRatioSelect');
+      let customDiv = document.getElementById('customRatioDiv');
+      if (selectEl && customDiv) {
+        customDiv.style.display = (selectEl.value === 'custom') ? 'flex' : 'none';
+      }
+    }
+
+    // ---------- p5 lifecycle ----------
+
+    function setup() {
+      pixelDensity(1);
+
+      let canvasElement = createCanvas(100, 100);
+      canvasElement.parent('canvas-container');
+
+      // sleeping lets settled bodies freeze completely instead of being re-solved
+      // every frame, which is what eliminates residual pile vibration
+      engine = Engine.create({ enableSleeping: true });
+      world = engine.world;
+
+      engine.positionIterations = 20;
+      engine.velocityIterations = 20;
+
+      // matter clamps static friction low by default, which lets contacts creep
+      Matter.Resolver._frictionMaxStatic = 2;
+
+      registerDecomp();
+      updateCanvasSize();
+      updatePhysicsValues();
+      resetClock();
+    }
+
+    function draw() {
+      let bgColor = getInputValue('bgColorPicker', '#ffffff');
+      background(bgColor);
+
+      let gravityTextEl = document.getElementById('val-gravity');
+      if (gravityTextEl) gravityTextEl.innerText = getInputFloat('gravitySlider', 1.0).toFixed(1);
+
+      let bounceTextEl = document.getElementById('val-bounce');
+      if (bounceTextEl) bounceTextEl.innerText = getInputFloat('bouncinessSlider', 0.2).toFixed(2);
+
+      let tenthsTextEl = document.getElementById('val-tenths');
+      if (tenthsTextEl) tenthsTextEl.innerText = getInputFloat('tenthsSizeSlider', 2) + "%";
+
+      let secondsTextEl = document.getElementById('val-seconds');
+      if (secondsTextEl) secondsTextEl.innerText = getInputFloat('secondsSizeSlider', 7) + "%";
+
+      let minutesTextEl = document.getElementById('val-minutes');
+      if (minutesTextEl) minutesTextEl.innerText = getInputFloat('minutesSizeSlider', 25) + "%";
+
+      let hoursTextEl = document.getElementById('val-hours');
+      if (hoursTextEl) hoursTextEl.innerText = getInputFloat('hoursSizeSlider', 40) + "%";
+
+      // fixed-timestep accumulator; cap backlog so a background tab doesn't spiral
+      physAccumMs += Math.min(deltaTime, 100);
+      let physSteps = 0;
+      while (physAccumMs >= PHYS_DT && physSteps < 10) {
+        Engine.update(engine, PHYS_DT);
+        physAccumMs -= PHYS_DT;
+        physSteps++;
+      }
+      if (physSteps >= 10) physAccumMs = 0;
+
+      // freeze pass: a sleeping body has already been motionless for ~1/3s, so promote
+      // it to static. a sequential-impulse solver cannot hold a 500-body stack rigid at
+      // any friction value; infinite mass can. this is what stops the bottom of the
+      // pile from creeping as weight accumulates above it
+      if (!dropping) {
+        for (let n of numbers) {
+          if (!n.frozen && n.body.isSleeping) {
+            Body.setStatic(n.body, true);
+            n.frozen = true;
+          }
+        }
+      }
+
+      if (!dropping) {
+        accumMs += deltaTime;
+        while (accumMs >= 100) {
+          accumMs -= 100;
+          simTenth++;
+
+          if (simTenth >= 10) {
+            simTenth = 0;
+            simSecond++;
+
+            if (simSecond >= 60) {
+              simSecond = 0;
+              simMinute++;
+              if (simMinute >= 60) {
+                simMinute = 0;
+                simHour = (simHour + 1) % 24;
+              }
+              startDrop();
+              break;
+            } else {
+              let isHourSecond = (simSecond === simHour);
+              let isMinSecond = (simSecond === simMinute);
+
+              if (isHourSecond) {
+                spawnNumber(simHour, 'hours');
+              } else if (isMinSecond) {
+                spawnNumber(simMinute, 'minutes');
+              } else {
+                spawnNumber(simSecond, 'seconds');
+              }
+            }
+          } else {
+            spawnNumber(simTenth, 'tenths');
+          }
+        }
+      }
+
+      for (let n of numbers) {
+        n.display();
+      }
+
+      // diagnostic outline debugger drawing the exact physics boundaries
+      let showDebug = document.getElementById('showDebugCheck') && document.getElementById('showDebugCheck').checked;
+      if (showDebug) {
+        stroke("#ef4444");
+        strokeWeight(1.5);
+        noFill();
+        for (let n of numbers) {
+          let parts = n.body.parts;
+          let start = parts.length > 1 ? 1 : 0;
+          for (let p = start; p < parts.length; p++) {
+            let part = parts[p];
+            beginShape();
+            for (let v of part.vertices) {
+              vertex(v.x, v.y);
+            }
+            endShape(CLOSE);
+          }
+        }
+      }
+
+      if (dropping && numbers.every(n => n.isOffscreen())) {
+        resetClock();
+      }
+
+      let borderCheck = document.getElementById('canvasBorderCheck');
+      if (borderCheck && borderCheck.checked) {
+        noFill();
+        stroke(0);
+        strokeWeight(2);
+        rect(0, 0, width, height);
+      }
+    }
+
+    function spawnNumber(value, unit, startY) {
+      let sizePercent;
+      if (unit === 'tenths') {
+        sizePercent = getInputFloat('tenthsSizeSlider', 2);
+      } else if (unit === 'seconds') {
+        sizePercent = getInputFloat('secondsSizeSlider', 7);
+      } else if (unit === 'minutes') {
+        sizePercent = getInputFloat('minutesSizeSlider', 25);
+      } else if (unit === 'hours') {
+        sizePercent = getInputFloat('hoursSizeSlider', 40);
+      }
+
+      let size = height * (sizePercent / 100);
+      numbers.push(new FallingNumber(value, unit, size, startY));
+    }
+
+    function createBoundaries() {
+      if (floorBody) Composite.remove(world, floorBody);
+
+      floorBody = Bodies.rectangle(width / 2, height + 25, width * 2, 50, {
+        isStatic: true,
+        restitution: getInputFloat('bouncinessSlider', 0.2),
+        friction: 0.5
+      });
+
+      wallLeft = Bodies.rectangle(-25, height / 2, 50, height * 2, {
+        isStatic: true,
+        friction: 0,
+        restitution: 0.2
+      });
+
+      wallRight = Bodies.rectangle(width + 25, height / 2, 50, height * 2, {
+        isStatic: true,
+        friction: 0,
+        restitution: 0.2
+      });
+
+      Composite.add(world, [floorBody, wallLeft, wallRight]);
+    }
+
+    // sleeping/frozen bodies ignore world changes, so anything that alters gravity,
+    // boundaries, or removes the floor must thaw the pile first.
+    // order matters: un-static restores mass/inertia, then clear the sleep flag
+    function wakeAll() {
+      for (let n of numbers) {
+        if (n.frozen) {
+          Body.setStatic(n.body, false);
+          n.frozen = false;
+        }
+        Matter.Sleeping.set(n.body, false);
+      }
+    }
+
+    function startDrop() {
+      dropping = true;
+      wakeAll();
+      if (floorBody) Composite.remove(world, floorBody);
+    }
+
+    function resetClock() {
+      for (let n of numbers) {
+        Composite.remove(world, n.body);
+      }
+      numbers = [];
+      dropping = false;
+      accumMs = 0;
+
+      Composite.clear(world, false);
+      createBoundaries();
+
+      // sequential historical waterfall stack builder
+      let spawnIndex = 0;
+      for (let s = 0; s <= simSecond; s++) {
+        let isHourSec = (s === simHour);
+        let isMinSec = (s === simMinute);
+
+        // vertically stagger starting heights so initial bodies don't spawn overlapped
+        let staggerY = -spawnIndex * (height / 10) - 100;
+
+        if (isHourSec) {
+          spawnNumber(simHour, 'hours', staggerY);
+          spawnIndex++;
+        } else if (isMinSec) {
+          spawnNumber(simMinute, 'minutes', staggerY);
+          spawnIndex++;
+        } else {
+          if (s > 0) {
+            spawnNumber(s, 'seconds', staggerY);
+            spawnIndex++;
+          }
+        }
+      }
+    }
+
+    function updatePhysicsValues() {
+      let gVal = getInputFloat('gravitySlider', 1.0);
+      world.gravity.y = gVal;
+
+      let rVal = getInputFloat('bouncinessSlider', 0.2);
+      if (floorBody) floorBody.restitution = rVal;
+
+      for (let n of numbers) {
+        // restitution lives on parts during collision resolution
+        for (let part of n.body.parts) {
+          part.restitution = rVal;
+        }
+      }
+      if (numbers.length > 0) wakeAll();
+    }
+
+    function updateCanvasSize() {
+      let containerW = windowWidth - 320;
+      let containerH = windowHeight;
+      if (containerW < 200) containerW = 200;
+
+      let aspectRatioStr = getInputValue('aspectRatioSelect', '9:16');
+      let w, h;
+
+      if (aspectRatioStr === 'fill') {
+        w = containerW;
+        h = containerH;
+      } else {
+        let ratio;
+        if (aspectRatioStr === 'custom') {
+          let rx = getInputFloat('customRatioX', 9);
+          let ry = getInputFloat('customRatioY', 16);
+          ratio = rx / ry;
+        } else {
+          let parts = aspectRatioStr.split(':');
+          ratio = parseInt(parts[0]) / parseInt(parts[1]);
+        }
+
+        h = containerH;
+        w = h * ratio;
+        if (w > containerW) {
+          w = containerW;
+          h = w / ratio;
+        }
+      }
+
+      w = Math.floor(w / 2) * 2;
+      h = Math.floor(h / 2) * 2;
+
+      resizeCanvas(w, h);
+
+      if (world) {
+        let toRemove = [];
+        if (wallLeft) toRemove.push(wallLeft);
+        if (wallRight) toRemove.push(wallRight);
+        if (toRemove.length > 0) Composite.remove(world, toRemove);
+
+        if (!dropping && floorBody) {
+          Composite.remove(world, floorBody);
+        }
+        createBoundaries();
+        wakeAll();
+      }
+    }
+
+    function windowResized() {
+      updateCanvasSize();
+    }
+
+    function applyInputTime() {
+      let timeStr = getInputValue('timeInput', '4:33:00.0').trim();
+      let match = timeStr.match(/^(\d{1,2}):(\d{1,2}):(\d{1,2})(?:\.(\d))?$/);
+
+      if (match) {
+        let h = parseInt(match[1], 10);
+        let m = parseInt(match[2], 10);
+        let s = parseInt(match[3], 10);
+        let t = match[4] ? parseInt(match[4], 10) : 0;
+
+        if (h > 23 || m > 59 || s > 59 || t > 9) {
+          alert("Error: Input bounds are invalid (Hours: 0-23, Minutes: 0-59, Seconds: 0-59, Tenths: 0-9)");
+          return;
+        }
+
+        simHour = h;
+        simMinute = m;
+        simSecond = s;
+        simTenth = t;
+
+        resetClock();
+      } else {
+        alert("Invalid format! Please format as HH:MM:SS or HH:MM:SS.T (e.g., 4:33:00.0)");
+      }
+    }
+
+    // ---------- falling number body ----------
+
+    class FallingNumber {
+      constructor(val, unit, size, startY) {
+        this.val = val;
+        this.unit = unit;
+        this.size = size;
+        this.isConcave = false;
+        this.frozen = false;
+        this.body = null;
+
+        let glyph = getGlyph(val);
+        // world px per raster px, anchored to the glyph's tight metric height
+        let s = size / glyph.tightH;
+        this.rasterScale = s;
+
+        let rVal = getInputFloat('bouncinessSlider', 0.2);
+        let initialY = (startY !== undefined) ? startY : -size * 2;
+
+        let options = {
+          restitution: rVal,
+          friction: 0.8,
+          frictionStatic: 1.2,
+          frictionAir: 0.01,
+          // at constant density mass scales with AREA, so the hour glyph outweighs a
+          // tenth ~170:1 and lands like a boulder on gravel, squirting small numbers
+          // out sideways. scaling density by 1/size makes mass scale with linear size
+          // instead, ~10:1, which still reads as heavy without wrecking the pile
+          density: 0.01 * (60 / size),
+          slop: 0.02,            // 0.005 was so tight the solver micro-corrected forever
+          sleepThreshold: 40     // ~1/3s of stillness before sleeping
+        };
+
+        // only hours and minutes get exact concave geometry;
+        // tenths and seconds stay on cheap rectangle physics
+        let isConcaveUnit = (unit === 'hours' || unit === 'minutes');
+        if (isConcaveUnit && glyph.contours.length > 0) {
+          try {
+            let sets = glyph.contours.map(c => c.map(p => ({ x: p.x * s, y: p.y * s })));
+            let spawnX = random(size, Math.max(size + 1, width - size));
+            let result = compoundFromContours(sets, spawnX, initialY, options);
+
+            if (result) {
+              this.body = result.body;
+              this.isConcave = true;
+              // canvas top-left in local body coords:
+              // anchor = contour-min offset from centroid; contourBounds.min = same point in raster px
+              this.imgOffset = {
+                x: result.anchor.x - glyph.contourBounds.min.x * s,
+                y: result.anchor.y - glyph.contourBounds.min.y * s
+              };
+            }
+          } catch (err) {
+            console.warn("Concave body creation failed, falling back to rectangle.", err);
+            this.body = null;
+            this.isConcave = false;
+          }
+        }
+
+        // rectangle physics (tenths, seconds, or fallback)
+        if (!this.body) {
+          let w = glyph.tightW * s;
+          let h = glyph.tightH * s;
+          this.w = w;
+          this.h = h;
+          let spawnX = random(w / 2, Math.max(w / 2 + 1, width - w / 2));
+          this.body = Bodies.rectangle(spawnX, initialY, w, h, options);
+          // tight box is inset by pad on all sides of the raster
+          this.imgOffset = {
+            x: -w / 2 - GLYPH_PAD * s,
+            y: -h / 2 - GLYPH_PAD * s
+          };
+        }
+
+        Body.setAngularVelocity(this.body, random(-0.06, 0.06));
+        Composite.add(world, this.body);
+      }
+
+      isOffscreen() {
+        let { x, y } = this.body.position;
+        return y > height + 200 || x < -200 || x > width + 200;
+      }
+
+      display() {
+        let glyph = getGlyph(this.val);
+        let pos = this.body.position;
+        let angle = this.body.angle;
+        let s = this.rasterScale;
+
+        push();
+        translate(pos.x, pos.y);
+        rotate(angle);
+        // draw the raster directly; p5 transforms apply to the underlying 2d context
+        drawingContext.drawImage(
+          glyph.canvas,
+          this.imgOffset.x,
+          this.imgOffset.y,
+          glyph.canvas.width * s,
+          glyph.canvas.height * s
+        );
+        pop();
+      }
+    }
+  </script>
+</body>
+</html>
