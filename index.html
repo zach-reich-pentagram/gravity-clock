@@ -197,17 +197,58 @@
     const GRAVITY = 3.0;
     const BOUNCE = 0.2;
 
-    // unit sizes as % of canvas height — the same proportions across every
-    // aspect ratio. tunable at runtime through the hidden advanced panel
-    let UNIT_PCT = { tenths: 1, seconds: 5, minutes: 25, hours: 40 };
+    // sizing and tracking are kept PER ASPECT RATIO. defaults below; anything
+    // adjusted in the advanced panel is saved to localStorage under the active
+    // aspect ratio, so tweaks survive refreshes without editing the file
+    let SAVED = {};
+    try { SAVED = JSON.parse(localStorage.getItem('gravityClockSettings') || '{}') || {}; } catch (e) { SAVED = {}; }
 
-    // tracking between the characters of multi-digit numbers, in thousandths
-    // of an em (negative = tighter), per unit of time. tunable in the panel
-    let TRACKING = { tenths: -40, seconds: -40, minutes: -40, hours: -40 };
+    const BASE_DEFAULTS = {
+      sizes: { tenths: 1, seconds: 5, minutes: 25, hours: 40 },
+      tracking: { tenths: -40, seconds: -40, minutes: -40, hours: -40 }
+    };
+    const ASPECT_DEFAULTS = {
+      '9:16': {
+        sizes: { tenths: 1.25, seconds: 4.5, minutes: 25, hours: 40 },
+        tracking: { tenths: -40, seconds: -75, minutes: -75, hours: -150 }
+      }
+    };
+
+    function currentAspect() {
+      let el = document.getElementById('aspectRatioSelect');
+      return el ? el.value : '16:9';
+    }
+
+    function settingsForAspect(a) {
+      let d = ASPECT_DEFAULTS[a] || BASE_DEFAULTS;
+      let s = (SAVED.aspects && SAVED.aspects[a]) || {};
+      return {
+        sizes: Object.assign({}, BASE_DEFAULTS.sizes, d.sizes, s.sizes),
+        tracking: Object.assign({}, BASE_DEFAULTS.tracking, d.tracking, s.tracking)
+      };
+    }
+
+    let UNIT_PCT, TRACKING;
+    function applyAspectSettings() {
+      let cfg = settingsForAspect(currentAspect());
+      UNIT_PCT = cfg.sizes;
+      TRACKING = cfg.tracking;
+    }
+    applyAspectSettings();
+
+    function persistSettings() {
+      SAVED.aspects = SAVED.aspects || {};
+      SAVED.aspects[currentAspect()] = { sizes: UNIT_PCT, tracking: TRACKING };
+      SAVED.resolution = RESOLUTION;
+      try { localStorage.setItem('gravityClockSettings', JSON.stringify(SAVED)); } catch (e) {}
+    }
+
+    // tracking values are in thousandths of an em (negative = tighter);
+    // the combined hour===minute number follows the hours setting
     function trackFor(unit) { return TRACKING[unit === 'combo' ? 'hours' : unit]; }
 
     // render density: canvas device pixels per css pixel. tunable in the panel
-    let RESOLUTION = Math.min(window.devicePixelRatio || 1, 2);
+    let RESOLUTION = SAVED.resolution || Math.min(window.devicePixelRatio || 1, 2);
 
     // collision groups: the finished minute's pile falls through the floor and
     // past the new minute's pieces, which are caught by the floor right away
@@ -1265,6 +1306,9 @@
       searchEl.value = cityName;
 
       document.getElementById('aspectRatioSelect').addEventListener('change', function () {
+        applyAspectSettings();   // each aspect ratio carries its own sizing/tracking
+        syncSliders();
+        glyphCache = {};
         updateCanvasSize();
         if (started) resetClock();
       });
@@ -1293,45 +1337,67 @@
         }
       });
 
-      function wireSlider(id, valId, unit) {
+      let SIZE_SLIDERS = [
+        ['sldTenths', 'valTenths', 'tenths'],
+        ['sldSeconds', 'valSeconds', 'seconds'],
+        ['sldMinutes', 'valMinutes', 'minutes'],
+        ['sldHours', 'valHours', 'hours']
+      ];
+      let TRK_SLIDERS = [
+        ['sldTrkTenths', 'valTrkTenths', 'tenths'],
+        ['sldTrkSeconds', 'valTrkSeconds', 'seconds'],
+        ['sldTrkMinutes', 'valTrkMinutes', 'minutes'],
+        ['sldTrkHours', 'valTrkHours', 'hours']
+      ];
+
+      // reflect the active aspect ratio's settings in the panel controls
+      window.syncSliders = function () {
+        for (let [id, valId, unit] of SIZE_SLIDERS) {
+          document.getElementById(id).value = String(UNIT_PCT[unit]);
+          document.getElementById(valId).textContent = UNIT_PCT[unit] + '%';
+        }
+        for (let [id, valId, unit] of TRK_SLIDERS) {
+          document.getElementById(id).value = String(TRACKING[unit]);
+          document.getElementById(valId).textContent = String(TRACKING[unit]);
+        }
+        document.getElementById('sldRes').value = String(RESOLUTION);
+        document.getElementById('valRes').textContent = RESOLUTION + 'x';
+      };
+
+      for (let [id, valId, unit] of SIZE_SLIDERS) {
         let sld = document.getElementById(id);
         let val = document.getElementById(valId);
         sld.addEventListener('input', function () {
           UNIT_PCT[unit] = parseFloat(sld.value);
           val.textContent = sld.value + '%';
+          persistSettings();
           if (started) resetClock();
         });
       }
-      wireSlider('sldTenths', 'valTenths', 'tenths');
-      wireSlider('sldSeconds', 'valSeconds', 'seconds');
-      wireSlider('sldMinutes', 'valMinutes', 'minutes');
-      wireSlider('sldHours', 'valHours', 'hours');
 
-      function wireTracking(id, valId, unit) {
+      for (let [id, valId, unit] of TRK_SLIDERS) {
         let sld = document.getElementById(id);
         let val = document.getElementById(valId);
         sld.addEventListener('input', function () {
           TRACKING[unit] = parseFloat(sld.value);
           val.textContent = sld.value;
           glyphCache = {}; // geometry changed: rebuild rasters and collision shapes
+          persistSettings();
           if (started) resetClock();
         });
       }
-      wireTracking('sldTrkTenths', 'valTrkTenths', 'tenths');
-      wireTracking('sldTrkSeconds', 'valTrkSeconds', 'seconds');
-      wireTracking('sldTrkMinutes', 'valTrkMinutes', 'minutes');
-      wireTracking('sldTrkHours', 'valTrkHours', 'hours');
 
       let resSld = document.getElementById('sldRes');
-      resSld.value = String(RESOLUTION);
-      document.getElementById('valRes').textContent = RESOLUTION + 'x';
       resSld.addEventListener('input', function () {
         RESOLUTION = parseFloat(resSld.value);
         document.getElementById('valRes').textContent = RESOLUTION + 'x';
         pixelDensity(RESOLUTION);
         glyphCache = {}; // big-piece raster tiers depend on density
+        persistSettings();
         if (started) resetClock();
       });
+
+      syncSliders();
     })();
 </script>
 </body>
