@@ -162,6 +162,14 @@
           <div class="rowhead"><span>Hours</span><span class="val" id="valHours">40%</span></div>
           <input type="range" id="sldHours" min="10" max="70" step="0.5" value="40" />
         </div>
+        <div class="row">
+          <div class="rowhead"><span>Tracking</span><span class="val" id="valTracking">-40</span></div>
+          <input type="range" id="sldTracking" min="-150" max="150" step="5" value="-40" />
+        </div>
+        <div class="row">
+          <div class="rowhead"><span>Resolution</span><span class="val" id="valRes">2x</span></div>
+          <input type="range" id="sldRes" min="1" max="3" step="0.5" value="2" />
+        </div>
       </section>
 
       <a class="credit" href="https://zachreich.com" target="_blank" rel="noopener">©Zach Reich, 2026</a>
@@ -180,7 +188,8 @@
         Body = Matter.Body;
 
     let engine, world;
-    let numbers = [];
+    let numbers = [];          // the current minute's pieces
+    let droppingNumbers = [];  // the previous minute's pile, falling away
     let floorBody, wallLeft, wallRight;
 
     // ---------- fixed settings (public site) ----------
@@ -190,6 +199,26 @@
     // unit sizes as % of canvas height — the same proportions across every
     // aspect ratio. tunable at runtime through the hidden advanced panel
     let UNIT_PCT = { tenths: 1, seconds: 5, minutes: 25, hours: 40 };
+
+    // tracking between the characters of multi-digit numbers, in thousandths
+    // of an em (negative = tighter). tunable in the advanced panel
+    let TRACKING = -40;
+
+    // render density: canvas device pixels per css pixel. tunable in the panel
+    let RESOLUTION = Math.min(window.devicePixelRatio || 1, 2);
+
+    // collision groups: the finished minute's pile falls through the floor and
+    // past the new minute's pieces, which are caught by the floor right away
+    const FILTER_LIVE = { group: 0, category: 0x0001, mask: 0x0005 };
+    const FILTER_OLD = { group: 0, category: 0x0002, mask: 0x0002 };
+    const FILTER_STATIC = { group: 0, category: 0x0004, mask: 0x0001 };
+
+    function setFilter(body, f) {
+      body.collisionFilter = { group: f.group, category: f.category, mask: f.mask };
+      for (let p of body.parts) {
+        p.collisionFilter = { group: f.group, category: f.category, mask: f.mask };
+      }
+    }
 
     function unitSize(unit) {
       if (unit === 'combo') {
@@ -206,8 +235,6 @@
     let simSecond = 0;
     let simTick = 0;         // tenths elapsed within the current minute (0..599)
     let started = false;
-
-    let dropping = false;
 
     let darkMode = false;
     function inkColor() { return darkMode ? '#ffffff' : '#000000'; }
@@ -563,24 +590,32 @@
     function renderGlyphTexture(glyph, colorHex) {
       let ctx = glyph.canvas.getContext('2d');
       ctx.clearRect(0, 0, glyph.canvas.width, glyph.canvas.height);
-      ctx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
+      ctx.font = `${glyph.fontPx}px ${FONT_STACK}`;
       ctx.textBaseline = 'alphabetic';
       if (glyph.outline) {
         ctx.strokeStyle = colorHex;
         ctx.lineWidth = glyph.lw;
-        ctx.strokeText(glyph.str, glyph.drawX, glyph.drawY);
+        for (let i = 0; i < glyph.chars.length; i++) {
+          ctx.strokeText(glyph.chars[i], glyph.drawX + glyph.pens[i], glyph.drawY);
+        }
       } else {
         ctx.fillStyle = colorHex;
-        ctx.fillText(glyph.str, glyph.drawX, glyph.drawY);
+        for (let i = 0; i < glyph.chars.length; i++) {
+          ctx.fillText(glyph.chars[i], glyph.drawX + glyph.pens[i], glyph.drawY);
+        }
       }
       glyph.color = colorHex;
     }
 
     // outline=true renders the texture as a stroke (used when hour === minute) while
-    // the collision contours are still traced from the filled shape
-    function getGlyph(val, outline, lw) {
+    // the collision contours are still traced from the filled shape.
+    // fontPx sets the raster resolution: big pieces request a tier sized to how
+    // large they draw on screen; small pieces share the 512px default.
+    // characters are laid out individually so TRACKING applies between digits.
+    function getGlyph(val, outline, lw, fontPx) {
+      fontPx = fontPx || GLYPH_FONT_PX;
       let colorHex = inkColor();
-      let key = String(val) + (outline ? ':o' : '');
+      let key = String(val) + ':' + fontPx + (outline ? ':o' : '');
       let cached = glyphCache[key];
       if (cached) {
         let lwStale = outline && lw && Math.abs(cached.lw - lw) > cached.lw * 0.2;
@@ -591,19 +626,33 @@
       }
 
       let str = String(val);
+      let chars = str.split('');
       let canvas = document.createElement('canvas');
       let ctx = canvas.getContext('2d');
-      ctx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
-      let m = ctx.measureText(str);
+      ctx.font = `${fontPx}px ${FONT_STACK}`;
 
-      // tight bbox from actual metrics, fall back to loose estimate on ancient browsers
-      let left = Math.ceil(m.actualBoundingBoxLeft !== undefined ? m.actualBoundingBoxLeft : 0);
-      let right = Math.ceil(m.actualBoundingBoxRight !== undefined ? m.actualBoundingBoxRight : m.width);
-      let asc = Math.ceil(m.actualBoundingBoxAscent !== undefined ? m.actualBoundingBoxAscent : GLYPH_FONT_PX * 0.75);
-      let desc = Math.ceil(m.actualBoundingBoxDescent !== undefined ? m.actualBoundingBoxDescent : GLYPH_FONT_PX * 0.05);
+      // per-character metrics with tracking between advances
+      let track = fontPx * (TRACKING / 1000);
+      let pens = [];
+      let pen = 0, asc = 0, desc = 0;
+      let mFirst = null, mLast = null;
+      for (let i = 0; i < chars.length; i++) {
+        let m = ctx.measureText(chars[i]);
+        if (i === 0) mFirst = m;
+        mLast = m;
+        pens.push(pen);
+        asc = Math.max(asc, m.actualBoundingBoxAscent !== undefined ? m.actualBoundingBoxAscent : fontPx * 0.75);
+        desc = Math.max(desc, m.actualBoundingBoxDescent !== undefined ? m.actualBoundingBoxDescent : fontPx * 0.05);
+        pen += m.width + track;
+      }
+      let left = Math.ceil(mFirst.actualBoundingBoxLeft !== undefined ? mFirst.actualBoundingBoxLeft : 0);
+      let right = Math.ceil(pens[pens.length - 1] +
+        (mLast.actualBoundingBoxRight !== undefined ? mLast.actualBoundingBoxRight : mLast.width));
+      asc = Math.ceil(asc);
+      desc = Math.ceil(desc);
 
-      let tightW = left + right;
-      let tightH = asc + desc;
+      let tightW = Math.max(1, left + right);
+      let tightH = Math.max(1, asc + desc);
 
       canvas.width = tightW + 2 * GLYPH_PAD;
       canvas.height = tightH + 2 * GLYPH_PAD;
@@ -611,6 +660,9 @@
       let glyph = {
         canvas: canvas,
         str: str,
+        chars: chars,
+        pens: pens,
+        fontPx: fontPx,
         tightW: tightW,
         tightH: tightH,
         drawX: GLYPH_PAD + left,
@@ -629,10 +681,12 @@
       fillCanvas.width = canvas.width;
       fillCanvas.height = canvas.height;
       let fillCtx = fillCanvas.getContext('2d');
-      fillCtx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
+      fillCtx.font = `${fontPx}px ${FONT_STACK}`;
       fillCtx.textBaseline = 'alphabetic';
       fillCtx.fillStyle = '#000';
-      fillCtx.fillText(str, glyph.drawX, glyph.drawY);
+      for (let i = 0; i < chars.length; i++) {
+        fillCtx.fillText(chars[i], glyph.drawX + pens[i], glyph.drawY);
+      }
 
       // downsample the raster and trace pixel-exact outer boundaries
       let scale = TRACE_H / fillCanvas.height;
@@ -715,7 +769,7 @@
     // ---------- p5 lifecycle ----------
 
     function setup() {
-      pixelDensity(1);
+      pixelDensity(RESOLUTION);
 
       let canvasElement = createCanvas(100, 100);
       canvasElement.parent('canvas-container');
@@ -761,45 +815,53 @@
       // it to static. a sequential-impulse solver cannot hold a 500-body stack rigid at
       // any friction value; infinite mass can. this is what stops the bottom of the
       // pile from creeping as weight accumulates above it
-      if (!dropping) {
-        for (let n of numbers) {
-          if (!n.frozen && n.body.isSleeping) {
-            Body.setStatic(n.body, true);
-            n.frozen = true;
-          }
-        }
-      }
-
-      // advance the clock from the selected city's real time
-      if (!dropping) {
-        if (zt.h !== simHour || zt.m !== simMinute) {
-          startDrop();
-        } else {
-          let target = zt.s * 10 + Math.floor(zt.ms / 100);
-          if (target - simTick > 50) {
-            // several seconds behind (hidden tab etc): rebuild instead of raining a backlog
-            resetClock();
-          } else {
-            while (simTick < target) {
-              simTick++;
-              let t = simTick % 10;
-              if (t === 0) {
-                simSecond = simTick / 10;
-                spawnForSecond(simSecond);
-              } else {
-                spawnNumber(t, 'tenths');
-              }
-            }
-          }
-        }
-      }
-
       for (let n of numbers) {
+        if (!n.frozen && n.body.isSleeping) {
+          Body.setStatic(n.body, true);
+          n.frozen = true;
+        }
+      }
+
+      // advance the clock from the selected city's real time. the minute change
+      // releases the old pile but never pauses spawning: the new minute's first
+      // tenths fall from the top while the old pile is still falling away
+      if (zt.h !== simHour || zt.m !== simMinute) {
+        dropPile();
+        simHour = zt.h;
+        simMinute = zt.m;
+        simSecond = 0;
+        simTick = 0;
+      }
+      let target = zt.s * 10 + Math.floor(zt.ms / 100);
+      if (target - simTick > 50) {
+        // several seconds behind (hidden tab etc): rebuild instead of raining a backlog
+        resetClock();
+      } else {
+        while (simTick < target) {
+          simTick++;
+          let t = simTick % 10;
+          if (t === 0) {
+            simSecond = simTick / 10;
+            spawnForSecond(simSecond);
+          } else {
+            spawnNumber(t, 'tenths');
+          }
+        }
+      }
+
+      // remove old-pile pieces once they have fallen out of view
+      for (let i = droppingNumbers.length - 1; i >= 0; i--) {
+        if (droppingNumbers[i].isOffscreen()) {
+          Composite.remove(world, droppingNumbers[i].body);
+          droppingNumbers.splice(i, 1);
+        }
+      }
+
+      for (let n of droppingNumbers) {
         n.display();
       }
-
-      if (dropping && numbers.every(n => n.isOffscreen())) {
-        resetClock();
+      for (let n of numbers) {
+        n.display();
       }
     }
 
@@ -820,22 +882,27 @@
     function createBoundaries() {
       if (floorBody) Composite.remove(world, floorBody);
 
+      let staticFilter = { group: 0, category: FILTER_STATIC.category, mask: FILTER_STATIC.mask };
+
       floorBody = Bodies.rectangle(width / 2, height + 25, width * 2, 50, {
         isStatic: true,
         restitution: BOUNCE,
-        friction: 0.5
+        friction: 0.5,
+        collisionFilter: staticFilter
       });
 
       wallLeft = Bodies.rectangle(-25, height / 2, 50, height * 2, {
         isStatic: true,
         friction: 0,
-        restitution: 0.2
+        restitution: 0.2,
+        collisionFilter: staticFilter
       });
 
       wallRight = Bodies.rectangle(width + 25, height / 2, 50, height * 2, {
         isStatic: true,
         friction: 0,
-        restitution: 0.2
+        restitution: 0.2,
+        collisionFilter: staticFilter
       });
 
       Composite.add(world, [floorBody, wallLeft, wallRight]);
@@ -854,18 +921,35 @@
       }
     }
 
-    function startDrop() {
-      dropping = true;
-      wakeAll();
-      if (floorBody) Composite.remove(world, floorBody);
+    // the finished minute's pile switches to the OLD collision group, so it
+    // falls through the floor while the new minute's pieces (spawning the
+    // whole time) are caught by the still-present floor
+    function dropPile() {
+      for (let n of numbers) {
+        if (n.frozen) {
+          Body.setStatic(n.body, false);
+          n.frozen = false;
+        }
+        Matter.Sleeping.set(n.body, false);
+        setFilter(n.body, FILTER_OLD);
+        droppingNumbers.push(n);
+      }
+      numbers = [];
+      // release the finished minute's high-res glyph rasters
+      for (let k in glyphCache) {
+        if (glyphCache[k].fontPx > GLYPH_FONT_PX) delete glyphCache[k];
+      }
     }
 
     function resetClock() {
       for (let n of numbers) {
         Composite.remove(world, n.body);
       }
+      for (let n of droppingNumbers) {
+        Composite.remove(world, n.body);
+      }
       numbers = [];
-      dropping = false;
+      droppingNumbers = [];
 
       let zt = zoneTime();
       simHour = zt.h;
@@ -925,7 +1009,7 @@
 
       function place(value, unit) {
         let n = spawnNumber(value, unit);
-        let glyph = getGlyph(value, n.outline, n.lw);
+        let glyph = n.glyph;
         let w0 = glyph.tightW * n.rasterScale;
         let h0 = glyph.tightH * n.rasterScale;
         let isBig = (unit === 'hours' || unit === 'minutes' || unit === 'combo');
@@ -1007,9 +1091,6 @@
         if (wallRight) toRemove.push(wallRight);
         if (toRemove.length > 0) Composite.remove(world, toRemove);
 
-        if (!dropping && floorBody) {
-          Composite.remove(world, floorBody);
-        }
         createBoundaries();
         wakeAll();
       }
@@ -1031,13 +1112,23 @@
         this.frozen = false;
         this.body = null;
 
-        let glyph = getGlyph(val, this.outline);
+        // big pieces draw large on screen, so they request a raster tier that
+        // matches their displayed device-pixel size instead of the shared 512px
+        let isBigUnit = (unit === 'hours' || unit === 'minutes' || unit === 'combo');
+        let fontPx = GLYPH_FONT_PX;
+        if (isBigUnit) {
+          let target = size * RESOLUTION / 0.72;
+          fontPx = Math.min(2048, Math.max(GLYPH_FONT_PX, 256 * Math.ceil(target / 256)));
+        }
+
+        let glyph = getGlyph(val, this.outline, undefined, fontPx);
         // world px per raster px, anchored to the glyph's tight metric height
         let s = size / glyph.tightH;
         this.rasterScale = s;
         // 1px on-screen stroke for the outlined combo number
         this.lw = Math.max(0.6, 1 / s);
-        if (this.outline) glyph = getGlyph(val, true, this.lw);
+        if (this.outline) glyph = getGlyph(val, true, this.lw, fontPx);
+        this.glyph = glyph;
 
         let initialY = (startY !== undefined) ? startY : -size * 2;
 
@@ -1046,6 +1137,7 @@
           friction: 0.8,
           frictionStatic: 1.2,
           frictionAir: 0.01,
+          collisionFilter: { group: 0, category: FILTER_LIVE.category, mask: FILTER_LIVE.mask },
           // at constant density mass scales with AREA, so the hour glyph outweighs a
           // tenth ~170:1 and lands like a boulder on gravel, squirting small numbers
           // out sideways. scaling density by 1/size makes mass scale with linear size
@@ -1106,7 +1198,8 @@
       }
 
       display() {
-        let glyph = getGlyph(this.val, this.outline, this.lw);
+        let glyph = this.glyph;
+        if (glyph.color !== inkColor()) renderGlyphTexture(glyph, inkColor());
         let pos = this.body.position;
         let angle = this.body.angle;
         let s = this.rasterScale;
@@ -1215,6 +1308,25 @@
       wireSlider('sldSeconds', 'valSeconds', 'seconds');
       wireSlider('sldMinutes', 'valMinutes', 'minutes');
       wireSlider('sldHours', 'valHours', 'hours');
+
+      let trackSld = document.getElementById('sldTracking');
+      trackSld.addEventListener('input', function () {
+        TRACKING = parseFloat(trackSld.value);
+        document.getElementById('valTracking').textContent = trackSld.value;
+        glyphCache = {}; // geometry changed: rebuild rasters and collision shapes
+        if (started) resetClock();
+      });
+
+      let resSld = document.getElementById('sldRes');
+      resSld.value = String(RESOLUTION);
+      document.getElementById('valRes').textContent = RESOLUTION + 'x';
+      resSld.addEventListener('input', function () {
+        RESOLUTION = parseFloat(resSld.value);
+        document.getElementById('valRes').textContent = RESOLUTION + 'x';
+        pixelDensity(RESOLUTION);
+        glyphCache = {}; // big-piece raster tiers depend on density
+        if (started) resetClock();
+      });
     })();
 </script>
 </body>
