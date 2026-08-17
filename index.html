@@ -87,6 +87,11 @@
   input[type=range]::-moz-range-track { height: 1px; background: var(--ink); }
   input[type=range]::-moz-range-thumb { width: 11px; height: 11px; border-radius: 50%; background: var(--ink); border: 1px solid var(--ink); }
 
+  .btn { border: 1px solid var(--hair); background: var(--paper); color: var(--ink);
+         border-radius: 999px; padding: 6px 16px; cursor: pointer; }
+  .btn:hover { background: var(--ink); color: var(--paper); }
+  #btnExport { position: fixed; top: 14px; right: 14px; z-index: 5; }
+
   /* ---------- stage ---------- */
   #canvas-container { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 22px; min-width: 0; min-height: 0; }
   #canvas-container canvas { border: 1px solid var(--hair); display: block; }
@@ -99,6 +104,8 @@
 </head>
 <body>
 <div class="app">
+
+  <button class="btn" id="btnExport">Export!</button>
 
   <div class="body">
 
@@ -113,8 +120,8 @@
       <section class="panel">
         <div class="selwrap">
           <select class="field" id="aspectRatioSelect">
-            <option value="16:9" selected>16:9 — Horizontal</option>
-            <option value="9:16">9:16 — Vertical</option>
+            <option value="16:9">16:9 — Horizontal</option>
+            <option value="9:16" selected>9:16 — Vertical</option>
             <option value="1:1">1:1 — Square</option>
             <option value="4:3">4:3 — Horizontal</option>
             <option value="3:4">3:4 — Vertical</option>
@@ -167,8 +174,16 @@
           <input type="range" id="sldTrkHours" min="-150" max="150" step="5" value="-40" />
         </div>
         <div class="row">
+          <div class="rowhead"><span>Gravity</span><span class="val" id="valGravity">3</span></div>
+          <input type="range" id="sldGravity" min="0.2" max="10" step="0.1" value="3" />
+        </div>
+        <div class="row">
           <div class="rowhead"><span>Resolution</span><span class="val" id="valRes">2x</span></div>
           <input type="range" id="sldRes" min="1" max="3" step="0.5" value="2" />
+        </div>
+        <div class="row">
+          <div class="rowhead"><span>Simulate time</span><span class="val" id="valTimeSet"></span></div>
+          <input class="field" id="timeInput" type="text" placeholder="HH:MM:SS — enter to set" autocomplete="off" spellcheck="false" />
         </div>
       </section>
 
@@ -193,9 +208,13 @@
     let droppingNumbers = [];  // the previous minute's pile, falling away
     let floorBody, wallLeft, wallRight;
 
-    // ---------- fixed settings (public site) ----------
-    const GRAVITY = 3.0;
+    // ---------- settings (public site) ----------
+    let GRAVITY = 3.0;         // tunable in the advanced panel
     const BOUNCE = 0.2;
+
+    // shifts the clock off real time when a custom time is entered; the clock
+    // keeps running forward from there
+    let timeOffsetMs = 0;
 
     // sizing and tracking are kept PER ASPECT RATIO. defaults below; anything
     // adjusted in the advanced panel is saved to localStorage under the active
@@ -209,14 +228,26 @@
     };
     const ASPECT_DEFAULTS = {
       '9:16': {
-        sizes: { tenths: 1.25, seconds: 4.5, minutes: 25, hours: 40 },
+        sizes: { tenths: 1.5, seconds: 5, minutes: 20, hours: 40 },
         tracking: { tenths: -40, seconds: -75, minutes: -75, hours: -150 }
+      },
+      '16:9': {
+        sizes: { tenths: 2.5, seconds: 9, minutes: 42.5, hours: 70 },
+        tracking: { tenths: -40, seconds: -40, minutes: -80, hours: -150 }
+      },
+      '1:1': {
+        sizes: { tenths: 1.5, seconds: 6, minutes: 30.5, hours: 60.5 },
+        tracking: { tenths: -40, seconds: -40, minutes: -75, hours: -150 }
+      },
+      '4:3': {
+        sizes: { tenths: 1.75, seconds: 7, minutes: 35, hours: 65 },
+        tracking: { tenths: -40, seconds: -40, minutes: -70, hours: -150 }
       }
     };
 
     function currentAspect() {
       let el = document.getElementById('aspectRatioSelect');
-      return el ? el.value : '16:9';
+      return el ? el.value : '9:16';
     }
 
     function settingsForAspect(a) {
@@ -240,6 +271,7 @@
       SAVED.aspects = SAVED.aspects || {};
       SAVED.aspects[currentAspect()] = { sizes: UNIT_PCT, tracking: TRACKING };
       SAVED.resolution = RESOLUTION;
+      SAVED.gravity = GRAVITY;
       try { localStorage.setItem('gravityClockSettings', JSON.stringify(SAVED)); } catch (e) {}
     }
 
@@ -249,6 +281,7 @@
 
     // render density: canvas device pixels per css pixel. tunable in the panel
     let RESOLUTION = SAVED.resolution || Math.min(window.devicePixelRatio || 1, 2);
+    if (SAVED.gravity !== undefined) GRAVITY = SAVED.gravity;
 
     // collision groups: the finished minute's pile falls through the floor and
     // past the new minute's pieces, which are caught by the floor right away
@@ -320,7 +353,7 @@
       return fmtCache[tz];
     }
     function zoneTime() {
-      let now = new Date();
+      let now = new Date(Date.now() + timeOffsetMs);
       let h = 0, m = 0, s = 0;
       try {
         let parts = zoneFmt(zone).formatToParts(now);
@@ -1362,6 +1395,8 @@
         }
         document.getElementById('sldRes').value = String(RESOLUTION);
         document.getElementById('valRes').textContent = RESOLUTION + 'x';
+        document.getElementById('sldGravity').value = String(GRAVITY);
+        document.getElementById('valGravity').textContent = String(GRAVITY);
       };
 
       for (let [id, valId, unit] of SIZE_SLIDERS) {
@@ -1387,6 +1422,15 @@
         });
       }
 
+      let gravSld = document.getElementById('sldGravity');
+      gravSld.addEventListener('input', function () {
+        GRAVITY = parseFloat(gravSld.value);
+        document.getElementById('valGravity').textContent = gravSld.value;
+        if (world) world.gravity.y = GRAVITY;
+        wakeAll();  // sleeping/frozen bodies ignore a gravity change
+        persistSettings();
+      });
+
       let resSld = document.getElementById('sldRes');
       resSld.addEventListener('input', function () {
         RESOLUTION = parseFloat(resSld.value);
@@ -1395,6 +1439,52 @@
         glyphCache = {}; // big-piece raster tiers depend on density
         persistSettings();
         if (started) resetClock();
+      });
+
+      // custom time: shift the clock so the selected zone reads the entered
+      // time, then let it keep running forward from there
+      let timeInput = document.getElementById('timeInput');
+      let timeNote = document.getElementById('valTimeSet');
+      timeInput.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        e.stopPropagation();  // don't feed the 69-toggle buffer
+        let raw = timeInput.value.trim();
+        if (!raw) {
+          timeOffsetMs = 0;
+          timeNote.textContent = 'live';
+          if (started) resetClock();
+          return;
+        }
+        let m = raw.match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?(?:[.:](\d))?$/);
+        if (!m) { timeNote.textContent = 'HH:MM:SS'; return; }
+        let h = +m[1], mi = +m[2], s = m[3] ? +m[3] : 0, t = m[4] ? +m[4] : 0;
+        if (h > 23 || mi > 59 || s > 59) { timeNote.textContent = 'out of range'; return; }
+        timeOffsetMs = 0;                       // measure against true zone time
+        let now = zoneTime();
+        let cur = ((now.h * 60 + now.m) * 60 + now.s) * 1000 + now.ms;
+        let want = ((h * 60 + mi) * 60 + s) * 1000 + t * 100;
+        timeOffsetMs = (want - cur + 86400000) % 86400000;
+        timeNote.textContent = 'set';
+        if (started) resetClock();
+      });
+
+      // export the artboard as a jpg at the canvas's full pixel resolution
+      document.getElementById('btnExport').addEventListener('click', function () {
+        let src = document.querySelector('#canvas-container canvas');
+        if (!src) return;
+        let out = document.createElement('canvas');
+        out.width = src.width;
+        out.height = src.height;
+        let g = out.getContext('2d');
+        g.fillStyle = paperColor();          // jpg has no alpha; paint the ground
+        g.fillRect(0, 0, out.width, out.height);
+        g.drawImage(src, 0, 0);
+        let zt = zoneTime();
+        let stamp = pad2(zt.h) + pad2(zt.m) + pad2(zt.s);
+        let a = document.createElement('a');
+        a.download = 'gravity-clock-' + currentAspect().replace(':', 'x') + '-' + stamp + '.jpg';
+        a.href = out.toDataURL('image/jpeg', 0.95);
+        a.click();
       });
 
       syncSliders();
