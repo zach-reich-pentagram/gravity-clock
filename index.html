@@ -4,11 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Gravity Clock</title>
-<<<<<<< HEAD
-<link rel="icon" type="image/png" href="zach-reich-headshot.jpeg" />
-=======
 <link rel="icon" type="image/jpeg" href="zach-reich.jpeg" />
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
 
 <!-- convex decomposition for concave physics bodies -->
 <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
@@ -47,31 +43,17 @@
   ::selection { background: var(--ink); color: var(--paper); }
 
   /* ---------- shell ---------- */
-<<<<<<< HEAD
-  .app { display: grid; grid-template-rows: 52px 1fr; height: 100vh; }
-  .topbar { display: flex; align-items: center; gap: 14px; padding: 0 14px; }
-  .topbar .spacer { flex: 1; }
-  .wordmark { letter-spacing: 0.02em; }
-  .readout { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
-
-  .body { display: grid; grid-template-columns: 292px 1fr; min-height: 0; border-top: 1px solid var(--hair); }
-=======
   .app { height: 100vh; }
   .readout { margin-top: auto; padding: 2px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 
   .body { display: grid; grid-template-columns: 292px 1fr; height: 100%; min-height: 0; }
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
   .col { min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
   .col.left { border-right: 1px solid var(--hair); }
   .col::-webkit-scrollbar { width: 9px; }
   .col::-webkit-scrollbar-thumb { background: #d8d8d8; border-radius: 999px; }
 
   /* ---------- panels ---------- */
-<<<<<<< HEAD
-  .panel { border: 1px solid var(--hair); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-=======
   .panel { display: flex; flex-direction: column; gap: 10px; }
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
   .phead { display: flex; align-items: center; gap: 8px; }
 
   /* ---------- controls ---------- */
@@ -80,11 +62,7 @@
   .seg button + button { border-left: 1px solid var(--hair); }
   .seg button.on { background: var(--ink); color: var(--paper); }
 
-<<<<<<< HEAD
-  .field { border: 1px solid var(--hair); border-radius: 10px; padding: 8px 10px; background: var(--paper); width: 100%; outline: none; }
-=======
   .field { border: 1px solid var(--hair); border-radius: 999px; padding: 8px 14px; background: var(--paper); width: 100%; outline: none; }
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
   .field::placeholder { color: var(--muted); }
 
   .selwrap { position: relative; }
@@ -95,11 +73,7 @@
   .chip { border: 1px solid var(--hair); background: var(--paper); border-radius: 999px; padding: 5px 12px; cursor: pointer; }
   .chip:hover { background: var(--ink); color: var(--paper); }
 
-<<<<<<< HEAD
-  .credit { margin-top: auto; padding: 2px; color: var(--ink); text-decoration: none; }
-=======
   .credit { padding: 2px; color: var(--ink); text-decoration: none; }
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
   .credit:hover { text-decoration: underline; }
 
   .row { display: flex; flex-direction: column; gap: 5px; }
@@ -126,34 +100,17 @@
 <body>
 <div class="app">
 
-<<<<<<< HEAD
-  <div class="topbar">
-    <div class="wordmark" id="title">Gravity Clock</div>
-    <div class="spacer"></div>
-    <div class="readout" id="readout">00:00:00:0</div>
-  </div>
-
-=======
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
   <div class="body">
 
     <!-- ============ left column ============ -->
     <aside class="col left">
 
       <section class="panel">
-<<<<<<< HEAD
-        <div class="phead">City</div>
-=======
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         <input class="field" id="citySearch" type="text" placeholder="Search for a city" autocomplete="off" spellcheck="false" />
         <div class="results" id="cityResults" style="display:none"></div>
       </section>
 
       <section class="panel">
-<<<<<<< HEAD
-        <div class="phead">Aspect ratio</div>
-=======
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         <div class="selwrap">
           <select class="field" id="aspectRatioSelect">
             <option value="16:9" selected>16:9 — Horizontal</option>
@@ -169,10 +126,6 @@
       </section>
 
       <section class="panel">
-<<<<<<< HEAD
-        <div class="phead">Mode</div>
-=======
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         <div class="seg" id="segMode">
           <button class="on" data-mode="light">Light</button>
           <button data-mode="dark">Dark</button>
@@ -197,10 +150,6 @@
           <div class="rowhead"><span>Hours</span><span class="val" id="valHours">40%</span></div>
           <input type="range" id="sldHours" min="10" max="70" step="0.5" value="40" />
         </div>
-<<<<<<< HEAD
-      </section>
-
-=======
         <div class="row">
           <div class="rowhead"><span>Tenths tracking</span><span class="val" id="valTrkTenths">-40</span></div>
           <input type="range" id="sldTrkTenths" min="-150" max="150" step="5" value="-40" />
@@ -224,7 +173,6 @@
       </section>
 
       <div class="readout" id="readout">00:00:00:0</div>
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
       <a class="credit" href="https://zachreich.com" target="_blank" rel="noopener">©Zach Reich, 2026</a>
     </aside>
 
@@ -241,23 +189,14 @@
         Body = Matter.Body;
 
     let engine, world;
-<<<<<<< HEAD
-    let numbers = [];
-=======
     let numbers = [];          // the current minute's pieces
     let droppingNumbers = [];  // the previous minute's pile, falling away
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
     let floorBody, wallLeft, wallRight;
 
     // ---------- fixed settings (public site) ----------
     const GRAVITY = 3.0;
     const BOUNCE = 0.2;
 
-<<<<<<< HEAD
-    // unit sizes as % of canvas height — the same proportions across every
-    // aspect ratio. tunable at runtime through the hidden advanced panel
-    let UNIT_PCT = { tenths: 1, seconds: 5, minutes: 25, hours: 40 };
-=======
     // sizing and tracking are kept PER ASPECT RATIO. defaults below; anything
     // adjusted in the advanced panel is saved to localStorage under the active
     // aspect ratio, so tweaks survive refreshes without editing the file
@@ -323,7 +262,6 @@
         p.collisionFilter = { group: f.group, category: f.category, mask: f.mask };
       }
     }
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
 
     function unitSize(unit) {
       if (unit === 'combo') {
@@ -341,11 +279,6 @@
     let simTick = 0;         // tenths elapsed within the current minute (0..599)
     let started = false;
 
-<<<<<<< HEAD
-    let dropping = false;
-
-=======
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
     let darkMode = false;
     function inkColor() { return darkMode ? '#ffffff' : '#000000'; }
     function paperColor() { return darkMode ? '#000000' : '#ffffff'; }
@@ -700,21 +633,11 @@
     function renderGlyphTexture(glyph, colorHex) {
       let ctx = glyph.canvas.getContext('2d');
       ctx.clearRect(0, 0, glyph.canvas.width, glyph.canvas.height);
-<<<<<<< HEAD
-      ctx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
-=======
       ctx.font = `${glyph.fontPx}px ${FONT_STACK}`;
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
       ctx.textBaseline = 'alphabetic';
       if (glyph.outline) {
         ctx.strokeStyle = colorHex;
         ctx.lineWidth = glyph.lw;
-<<<<<<< HEAD
-        ctx.strokeText(glyph.str, glyph.drawX, glyph.drawY);
-      } else {
-        ctx.fillStyle = colorHex;
-        ctx.fillText(glyph.str, glyph.drawX, glyph.drawY);
-=======
         for (let i = 0; i < glyph.chars.length; i++) {
           ctx.strokeText(glyph.chars[i], glyph.drawX + glyph.pens[i], glyph.drawY);
         }
@@ -723,18 +646,11 @@
         for (let i = 0; i < glyph.chars.length; i++) {
           ctx.fillText(glyph.chars[i], glyph.drawX + glyph.pens[i], glyph.drawY);
         }
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
       }
       glyph.color = colorHex;
     }
 
     // outline=true renders the texture as a stroke (used when hour === minute) while
-<<<<<<< HEAD
-    // the collision contours are still traced from the filled shape
-    function getGlyph(val, outline, lw) {
-      let colorHex = inkColor();
-      let key = String(val) + (outline ? ':o' : '');
-=======
     // the collision contours are still traced from the filled shape.
     // fontPx sets the raster resolution: big pieces request a tier sized to how
     // large they draw on screen; small pieces share the 512px default.
@@ -744,7 +660,6 @@
       tracking = tracking || 0;
       let colorHex = inkColor();
       let key = String(val) + ':' + fontPx + ':' + tracking + (outline ? ':o' : '');
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
       let cached = glyphCache[key];
       if (cached) {
         let lwStale = outline && lw && Math.abs(cached.lw - lw) > cached.lw * 0.2;
@@ -755,21 +670,6 @@
       }
 
       let str = String(val);
-<<<<<<< HEAD
-      let canvas = document.createElement('canvas');
-      let ctx = canvas.getContext('2d');
-      ctx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
-      let m = ctx.measureText(str);
-
-      // tight bbox from actual metrics, fall back to loose estimate on ancient browsers
-      let left = Math.ceil(m.actualBoundingBoxLeft !== undefined ? m.actualBoundingBoxLeft : 0);
-      let right = Math.ceil(m.actualBoundingBoxRight !== undefined ? m.actualBoundingBoxRight : m.width);
-      let asc = Math.ceil(m.actualBoundingBoxAscent !== undefined ? m.actualBoundingBoxAscent : GLYPH_FONT_PX * 0.75);
-      let desc = Math.ceil(m.actualBoundingBoxDescent !== undefined ? m.actualBoundingBoxDescent : GLYPH_FONT_PX * 0.05);
-
-      let tightW = left + right;
-      let tightH = asc + desc;
-=======
       let chars = str.split('');
       let canvas = document.createElement('canvas');
       let ctx = canvas.getContext('2d');
@@ -797,7 +697,6 @@
 
       let tightW = Math.max(1, left + right);
       let tightH = Math.max(1, asc + desc);
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
 
       canvas.width = tightW + 2 * GLYPH_PAD;
       canvas.height = tightH + 2 * GLYPH_PAD;
@@ -805,12 +704,9 @@
       let glyph = {
         canvas: canvas,
         str: str,
-<<<<<<< HEAD
-=======
         chars: chars,
         pens: pens,
         fontPx: fontPx,
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         tightW: tightW,
         tightH: tightH,
         drawX: GLYPH_PAD + left,
@@ -829,19 +725,12 @@
       fillCanvas.width = canvas.width;
       fillCanvas.height = canvas.height;
       let fillCtx = fillCanvas.getContext('2d');
-<<<<<<< HEAD
-      fillCtx.font = `${GLYPH_FONT_PX}px ${FONT_STACK}`;
-      fillCtx.textBaseline = 'alphabetic';
-      fillCtx.fillStyle = '#000';
-      fillCtx.fillText(str, glyph.drawX, glyph.drawY);
-=======
       fillCtx.font = `${fontPx}px ${FONT_STACK}`;
       fillCtx.textBaseline = 'alphabetic';
       fillCtx.fillStyle = '#000';
       for (let i = 0; i < chars.length; i++) {
         fillCtx.fillText(chars[i], glyph.drawX + pens[i], glyph.drawY);
       }
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
 
       // downsample the raster and trace pixel-exact outer boundaries
       let scale = TRACE_H / fillCanvas.height;
@@ -924,11 +813,7 @@
     // ---------- p5 lifecycle ----------
 
     function setup() {
-<<<<<<< HEAD
-      pixelDensity(1);
-=======
       pixelDensity(RESOLUTION);
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
 
       let canvasElement = createCanvas(100, 100);
       canvasElement.parent('canvas-container');
@@ -974,47 +859,6 @@
       // it to static. a sequential-impulse solver cannot hold a 500-body stack rigid at
       // any friction value; infinite mass can. this is what stops the bottom of the
       // pile from creeping as weight accumulates above it
-<<<<<<< HEAD
-      if (!dropping) {
-        for (let n of numbers) {
-          if (!n.frozen && n.body.isSleeping) {
-            Body.setStatic(n.body, true);
-            n.frozen = true;
-          }
-        }
-      }
-
-      // advance the clock from the selected city's real time
-      if (!dropping) {
-        if (zt.h !== simHour || zt.m !== simMinute) {
-          startDrop();
-        } else {
-          let target = zt.s * 10 + Math.floor(zt.ms / 100);
-          if (target - simTick > 50) {
-            // several seconds behind (hidden tab etc): rebuild instead of raining a backlog
-            resetClock();
-          } else {
-            while (simTick < target) {
-              simTick++;
-              let t = simTick % 10;
-              if (t === 0) {
-                simSecond = simTick / 10;
-                spawnForSecond(simSecond);
-              } else {
-                spawnNumber(t, 'tenths');
-              }
-            }
-          }
-        }
-      }
-
-      for (let n of numbers) {
-        n.display();
-      }
-
-      if (dropping && numbers.every(n => n.isOffscreen())) {
-        resetClock();
-=======
       for (let n of numbers) {
         if (!n.frozen && n.body.isSleeping) {
           Body.setStatic(n.body, true);
@@ -1062,7 +906,6 @@
       }
       for (let n of numbers) {
         n.display();
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
       }
     }
 
@@ -1083,12 +926,6 @@
     function createBoundaries() {
       if (floorBody) Composite.remove(world, floorBody);
 
-<<<<<<< HEAD
-      floorBody = Bodies.rectangle(width / 2, height + 25, width * 2, 50, {
-        isStatic: true,
-        restitution: BOUNCE,
-        friction: 0.5
-=======
       let staticFilter = { group: 0, category: FILTER_STATIC.category, mask: FILTER_STATIC.mask };
 
       floorBody = Bodies.rectangle(width / 2, height + 25, width * 2, 50, {
@@ -1096,29 +933,20 @@
         restitution: BOUNCE,
         friction: 0.5,
         collisionFilter: staticFilter
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
       });
 
       wallLeft = Bodies.rectangle(-25, height / 2, 50, height * 2, {
         isStatic: true,
         friction: 0,
-<<<<<<< HEAD
-        restitution: 0.2
-=======
         restitution: 0.2,
         collisionFilter: staticFilter
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
       });
 
       wallRight = Bodies.rectangle(width + 25, height / 2, 50, height * 2, {
         isStatic: true,
         friction: 0,
-<<<<<<< HEAD
-        restitution: 0.2
-=======
         restitution: 0.2,
         collisionFilter: staticFilter
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
       });
 
       Composite.add(world, [floorBody, wallLeft, wallRight]);
@@ -1137,12 +965,6 @@
       }
     }
 
-<<<<<<< HEAD
-    function startDrop() {
-      dropping = true;
-      wakeAll();
-      if (floorBody) Composite.remove(world, floorBody);
-=======
     // the finished minute's pile switches to the OLD collision group, so it
     // falls through the floor while the new minute's pieces (spawning the
     // whole time) are caught by the still-present floor
@@ -1161,23 +983,17 @@
       for (let k in glyphCache) {
         if (glyphCache[k].fontPx > GLYPH_FONT_PX) delete glyphCache[k];
       }
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
     }
 
     function resetClock() {
       for (let n of numbers) {
         Composite.remove(world, n.body);
       }
-<<<<<<< HEAD
-      numbers = [];
-      dropping = false;
-=======
       for (let n of droppingNumbers) {
         Composite.remove(world, n.body);
       }
       numbers = [];
       droppingNumbers = [];
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
 
       let zt = zoneTime();
       simHour = zt.h;
@@ -1237,11 +1053,7 @@
 
       function place(value, unit) {
         let n = spawnNumber(value, unit);
-<<<<<<< HEAD
-        let glyph = getGlyph(value, n.outline, n.lw);
-=======
         let glyph = n.glyph;
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         let w0 = glyph.tightW * n.rasterScale;
         let h0 = glyph.tightH * n.rasterScale;
         let isBig = (unit === 'hours' || unit === 'minutes' || unit === 'combo');
@@ -1323,12 +1135,6 @@
         if (wallRight) toRemove.push(wallRight);
         if (toRemove.length > 0) Composite.remove(world, toRemove);
 
-<<<<<<< HEAD
-        if (!dropping && floorBody) {
-          Composite.remove(world, floorBody);
-        }
-=======
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         createBoundaries();
         wakeAll();
       }
@@ -1350,9 +1156,6 @@
         this.frozen = false;
         this.body = null;
 
-<<<<<<< HEAD
-        let glyph = getGlyph(val, this.outline);
-=======
         // big pieces draw large on screen, so they request a raster tier that
         // matches their displayed device-pixel size instead of the shared 512px
         let isBigUnit = (unit === 'hours' || unit === 'minutes' || unit === 'combo');
@@ -1364,18 +1167,13 @@
 
         let tracking = trackFor(unit);
         let glyph = getGlyph(val, this.outline, undefined, fontPx, tracking);
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         // world px per raster px, anchored to the glyph's tight metric height
         let s = size / glyph.tightH;
         this.rasterScale = s;
         // 1px on-screen stroke for the outlined combo number
         this.lw = Math.max(0.6, 1 / s);
-<<<<<<< HEAD
-        if (this.outline) glyph = getGlyph(val, true, this.lw);
-=======
         if (this.outline) glyph = getGlyph(val, true, this.lw, fontPx, tracking);
         this.glyph = glyph;
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
 
         let initialY = (startY !== undefined) ? startY : -size * 2;
 
@@ -1384,10 +1182,7 @@
           friction: 0.8,
           frictionStatic: 1.2,
           frictionAir: 0.01,
-<<<<<<< HEAD
-=======
           collisionFilter: { group: 0, category: FILTER_LIVE.category, mask: FILTER_LIVE.mask },
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
           // at constant density mass scales with AREA, so the hour glyph outweighs a
           // tenth ~170:1 and lands like a boulder on gravel, squirting small numbers
           // out sideways. scaling density by 1/size makes mass scale with linear size
@@ -1448,12 +1243,8 @@
       }
 
       display() {
-<<<<<<< HEAD
-        let glyph = getGlyph(this.val, this.outline, this.lw);
-=======
         let glyph = this.glyph;
         if (glyph.color !== inkColor()) renderGlyphTexture(glyph, inkColor());
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         let pos = this.body.position;
         let angle = this.body.angle;
         let s = this.rasterScale;
@@ -1475,13 +1266,6 @@
 
     // ---------- ui wiring ----------
 
-<<<<<<< HEAD
-    function updateTitle() {
-      document.getElementById('title').textContent = 'Gravity Clock: ' + cityName;
-    }
-
-=======
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
     (function () {
       let searchEl = document.getElementById('citySearch');
       let resultsEl = document.getElementById('cityResults');
@@ -1510,10 +1294,6 @@
             searchEl.value = c.city;
             resultsEl.style.display = 'none';
             resultsEl.innerHTML = '';
-<<<<<<< HEAD
-            updateTitle();
-=======
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
             if (started) resetClock();
           });
           resultsEl.appendChild(b);
@@ -1524,17 +1304,11 @@
       searchEl.addEventListener('input', function () { renderResults(searchEl.value); });
       searchEl.addEventListener('focus', function () { renderResults(searchEl.value); });
       searchEl.value = cityName;
-<<<<<<< HEAD
-      updateTitle();
-
-      document.getElementById('aspectRatioSelect').addEventListener('change', function () {
-=======
 
       document.getElementById('aspectRatioSelect').addEventListener('change', function () {
         applyAspectSettings();   // each aspect ratio carries its own sizing/tracking
         syncSliders();
         glyphCache = {};
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         updateCanvasSize();
         if (started) resetClock();
       });
@@ -1563,9 +1337,6 @@
         }
       });
 
-<<<<<<< HEAD
-      function wireSlider(id, valId, unit) {
-=======
       let SIZE_SLIDERS = [
         ['sldTenths', 'valTenths', 'tenths'],
         ['sldSeconds', 'valSeconds', 'seconds'],
@@ -1594,21 +1365,11 @@
       };
 
       for (let [id, valId, unit] of SIZE_SLIDERS) {
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
         let sld = document.getElementById(id);
         let val = document.getElementById(valId);
         sld.addEventListener('input', function () {
           UNIT_PCT[unit] = parseFloat(sld.value);
           val.textContent = sld.value + '%';
-<<<<<<< HEAD
-          if (started) resetClock();
-        });
-      }
-      wireSlider('sldTenths', 'valTenths', 'tenths');
-      wireSlider('sldSeconds', 'valSeconds', 'seconds');
-      wireSlider('sldMinutes', 'valMinutes', 'minutes');
-      wireSlider('sldHours', 'valHours', 'hours');
-=======
           persistSettings();
           if (started) resetClock();
         });
@@ -1637,7 +1398,6 @@
       });
 
       syncSliders();
->>>>>>> 8fe3935c509adf46a63a333abbf87ca7cafece24
     })();
 </script>
 </body>
