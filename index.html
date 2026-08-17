@@ -39,29 +39,26 @@
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
   }
+  html, body { overscroll-behavior-y: none; }
   button, input, select { font: inherit; color: inherit; }
   ::selection { background: var(--ink); color: var(--paper); }
 
   /* ---------- shell ---------- */
-  .app { display: grid; grid-template-rows: 1fr auto; height: 100vh; }
+  /* options top left (no dividing rule), canvas to their right,
+     live time bottom left and the credit bottom right */
+  .app { display: grid; grid-template-columns: 276px 1fr; grid-template-rows: 1fr auto; height: 100vh; }
+  .panelcol { grid-column: 1; grid-row: 1; min-height: 0; overflow-y: auto;
+              padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  #canvas-container { grid-column: 2; grid-row: 1; }
+  .foot { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: baseline;
+          justify-content: space-between; gap: 16px; padding: 12px 14px; }
+  .readout { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 
-  /* bottom dock: time at the left, controls in the middle, credit at the right */
-  .dock { display: flex; align-items: flex-end; gap: 16px; padding: 12px 14px; }
-  .dockmain { flex: 1 1 auto; min-width: 0; display: flex; align-items: flex-end;
-              justify-content: center; gap: 16px; }
-  .dockmain.adv { justify-content: flex-start; }   /* pushed left when advanced is open */
-  .controls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-  .readout { flex: 0 0 auto; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
-  .dockend { flex: 0 0 auto; }
+  .controls { display: flex; flex-direction: column; gap: 10px; }
 
   /* ---------- panels ---------- */
   .phead { display: flex; align-items: center; gap: 8px; }
-  .advpanel { flex: 0 0 auto; width: min(640px, 46vw); max-height: 44vh; overflow-y: auto;
-              display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-              gap: 2px 14px; align-content: end; }
-  .advpanel .phead { grid-column: 1 / -1; }
-  .advpanel .rowhead { gap: 4px; }
-  .advpanel .field { padding: 5px 12px; }
+  .advpanel { display: flex; flex-direction: column; gap: 6px; }
 
   /* ---------- controls ---------- */
   .seg { display: flex; border: 1px solid var(--hair); border-radius: 999px; overflow: hidden; }
@@ -70,18 +67,14 @@
   .seg button.on { background: var(--ink); color: var(--paper); }
 
   .field { border: 1px solid var(--hair); border-radius: 999px; padding: 8px 14px; background: var(--paper); width: 100%; outline: none; }
-  .controls .field { width: auto; }
-  .controls .seg { flex: 0 0 auto; }
-  .controls .seg button { padding: 8px 20px; }
   .citywrap { position: relative; }
-  #citySearch { width: 190px; }
   .field::placeholder { color: var(--muted); }
 
   .selwrap { position: relative; }
   .selwrap select { -webkit-appearance: none; appearance: none; cursor: pointer; padding-right: 28px; }
   .selwrap .caret { position: absolute; right: 12px; top: 50%; transform: translateY(-50%) rotate(90deg); pointer-events: none; }
 
-  .results { position: absolute; bottom: calc(100% + 6px); left: 0; width: 230px; z-index: 6;
+  .results { position: absolute; top: calc(100% + 6px); left: 0; width: 100%; z-index: 6;
              display: flex; flex-direction: column; gap: 5px; padding: 8px;
              background: var(--paper); border: 1px solid var(--hair); border-radius: 14px;
              max-height: 44vh; overflow-y: auto; }
@@ -112,26 +105,45 @@
   #canvas-container canvas { border: 1px solid var(--hair); display: block; }
 
   @media (max-width: 760px) {
-    .dock { flex-wrap: wrap; justify-content: center; gap: 10px; }
-    .dockmain { order: -1; flex-basis: 100%; }
-    .controls { flex-wrap: wrap; justify-content: center; }
-    .readout, .dockend { flex: 1 1 auto; }
-    .dockend { text-align: right; }
+    html, body { height: auto; overflow: visible; }
+    body { overflow-x: hidden; }
+    .app { grid-template-columns: 1fr; grid-template-rows: auto auto auto;
+           height: auto; min-height: 100vh; }
+    .panelcol { grid-column: 1; grid-row: 1; overflow-y: visible; padding: 14px 14px 4px; }
+    #canvas-container { grid-column: 1; grid-row: 2; height: 78vh; padding: 14px; }
+    .foot { grid-column: 1; grid-row: 3; }
+    #btnExport { position: static; }   /* joins the control stack on mobile */
   }
 </style>
 </head>
 <body>
 <div class="app">
 
-  <button class="btn" id="btnExport">Export!</button>
+  <aside class="panelcol">
 
-  <main id="canvas-container"></main>
-
-  <footer class="dock">
-
-    <div class="readout" id="readout">00:00:00:0</div>
-
-    <div class="dockmain" id="dockMain">
+      <div class="controls">
+        <div class="citywrap">
+          <input class="field" id="citySearch" type="text" placeholder="Search for a city" autocomplete="off" spellcheck="false" />
+          <div class="results" id="cityResults" style="display:none"></div>
+        </div>
+        <div class="selwrap">
+          <select class="field" id="aspectRatioSelect">
+            <option value="16:9">16:9 — Horizontal</option>
+            <option value="9:16" selected>9:16 — Vertical</option>
+            <option value="1:1">1:1 — Square</option>
+            <option value="4:3">4:3 — Horizontal</option>
+            <option value="3:4">3:4 — Vertical</option>
+            <option value="5:4">5:4 — Horizontal</option>
+            <option value="4:5">4:5 — Vertical</option>
+          </select>
+          <span class="caret">›</span>
+        </div>
+        <div class="seg" id="segMode">
+          <button class="on" data-mode="light">Light</button>
+          <button data-mode="dark">Dark</button>
+        </div>
+        <button class="btn" id="btnExport">Export!</button>
+      </div>
 
       <section class="advpanel" id="advPanel" style="display:none">
         <div class="phead">Advanced</div>
@@ -189,35 +201,13 @@
         </div>
       </section>
 
-      <div class="controls">
-        <div class="citywrap">
-          <input class="field" id="citySearch" type="text" placeholder="Search for a city" autocomplete="off" spellcheck="false" />
-          <div class="results" id="cityResults" style="display:none"></div>
-        </div>
-        <div class="selwrap">
-          <select class="field" id="aspectRatioSelect">
-            <option value="16:9">16:9 — Horizontal</option>
-            <option value="9:16" selected>9:16 — Vertical</option>
-            <option value="1:1">1:1 — Square</option>
-            <option value="4:3">4:3 — Horizontal</option>
-            <option value="3:4">3:4 — Vertical</option>
-            <option value="5:4">5:4 — Horizontal</option>
-            <option value="4:5">4:5 — Vertical</option>
-          </select>
-          <span class="caret">›</span>
-        </div>
-        <div class="seg" id="segMode">
-          <button class="on" data-mode="light">Light</button>
-          <button data-mode="dark">Dark</button>
-        </div>
-      </div>
+  </aside>
 
-    </div>
+  <main id="canvas-container"></main>
 
-    <div class="dockend">
-      <a class="credit" href="https://zachreich.com" target="_blank" rel="noopener">©Zach Reich, 2026</a>
-    </div>
-
+  <footer class="foot">
+    <div class="readout" id="readout">00:00:00:0</div>
+    <a class="credit" href="https://zachreich.com" target="_blank" rel="noopener">©Zach Reich, 2026</a>
   </footer>
 </div>
 
@@ -946,7 +936,7 @@
       let target = zt.s * 10 + Math.floor(zt.ms / 100);
       if (target - simTick > 50) {
         // several seconds behind (hidden tab etc): rebuild instead of raining a backlog
-        resetClock();
+        resetClock(500);
       } else {
         while (simTick < target) {
           simTick++;
@@ -1052,7 +1042,7 @@
       }
     }
 
-    function resetClock() {
+    function resetClock(settleMs) {
       for (let n of numbers) {
         Composite.remove(world, n.body);
       }
@@ -1070,7 +1060,7 @@
 
       Composite.clear(world, false);
       createBoundaries();
-      prebuildPile();
+      prebuildPile(settleMs);
     }
 
     // ---------- instant pile reconstruction ----------
@@ -1087,7 +1077,7 @@
       return { value: s, unit: 'seconds' };
     }
 
-    function prebuildPile() {
+    function prebuildPile(settleMs) {
       const colW = 4;
       let cols = new Array(Math.max(1, Math.ceil(width / colW))).fill(0);
 
@@ -1173,6 +1163,44 @@
         }
         let tenthCount = (s < simSecond) ? 9 : (simTick % 10);
         for (let t = 1; t <= tenthCount; t++) place(t, 'tenths');
+      }
+
+      settlePile(settleMs === undefined ? 900 : settleMs);
+    }
+
+    // Placement works off bounding boxes, which are looser than the glyphs, so
+    // the reconstructed pile starts slightly too tall and too loose. Running the
+    // simulation here — before the first frame is drawn — lets it collapse into
+    // its real resting shape off-screen, so the page opens on a pile that looks
+    // like it has been accumulating all along instead of one that visibly drops
+    // into place. Bounded by wall clock so a huge pile can never hang the load.
+    function settlePile(budgetMs) {
+      let t0 = performance.now();
+      let steps = 0;
+      while (steps < 900 && performance.now() - t0 < budgetMs) {
+        Engine.update(engine, PHYS_DT);
+        steps++;
+        if ((steps & 7) === 0) {
+          let moving = 0;
+          for (let n of numbers) {
+            if (n.frozen) continue;
+            if (n.body.isSleeping) { Body.setStatic(n.body, true); n.frozen = true; }
+            else moving++;
+          }
+          if (moving === 0) break;
+        }
+      }
+      // pin what has effectively stopped so the opening frame is stable; leave
+      // anything still genuinely falling to finish under normal physics
+      for (let n of numbers) {
+        if (n.frozen) continue;
+        let v = n.body.velocity;
+        if (Math.hypot(v.x, v.y) < 0.4) {
+          Body.setVelocity(n.body, { x: 0, y: 0 });
+          Body.setAngularVelocity(n.body, 0);
+          Body.setStatic(n.body, true);
+          n.frozen = true;
+        }
       }
     }
 
@@ -1399,8 +1427,7 @@
           if (keyBuffer.endsWith('69')) {
             let panel = document.getElementById('advPanel');
             let open = panel.style.display === 'none';
-            panel.style.display = open ? 'grid' : 'none';
-            document.getElementById('dockMain').classList.toggle('adv', open);
+            panel.style.display = open ? 'flex' : 'none';
           }
           keyBuffer = '';
         } else if (e.key.length === 1) {
@@ -1422,6 +1449,14 @@
         ['sldTrkMinutes', 'valTrkMinutes', 'minutes'],
         ['sldTrkHours', 'valTrkHours', 'hours']
       ];
+
+      // sliders fire continuously while dragging: coalesce the rebuilds
+      let resetTimer = null;
+      function scheduleReset() {
+        if (!started) return;
+        clearTimeout(resetTimer);
+        resetTimer = setTimeout(function () { resetClock(350); }, 130);
+      }
 
       // reflect the active aspect ratio's settings in the panel controls
       window.syncSliders = function () {
@@ -1446,7 +1481,7 @@
           UNIT_PCT[unit] = parseFloat(sld.value);
           val.textContent = sld.value + '%';
           persistSettings();
-          if (started) resetClock();
+          scheduleReset();
         });
       }
 
@@ -1458,7 +1493,7 @@
           val.textContent = sld.value;
           glyphCache = {}; // geometry changed: rebuild rasters and collision shapes
           persistSettings();
-          if (started) resetClock();
+          scheduleReset();
         });
       }
 
@@ -1478,7 +1513,7 @@
         pixelDensity(RESOLUTION);
         glyphCache = {}; // big-piece raster tiers depend on density
         persistSettings();
-        if (started) resetClock();
+        scheduleReset();
       });
 
       // custom time: shift the clock so the selected zone reads the entered
