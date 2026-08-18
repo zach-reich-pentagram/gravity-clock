@@ -214,6 +214,37 @@
         <input type="range" id="sldCanvasPad" min="0" max="15" step="0.5" value="0" />
       </div>
       <div class="row">
+        <div class="rowhead"><span>Sound</span><span class="val" id="valVolume">50%</span></div>
+        <div class="seg" id="segSound">
+          <button class="on" data-snd="off">Off</button>
+          <button data-snd="on">On</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="rowhead"><span>Volume</span></div>
+        <input type="range" id="sldVolume" min="0" max="100" step="5" value="50" />
+      </div>
+      <div class="row">
+        <div class="rowhead"><span>Tenths sound</span></div>
+        <div class="selwrap"><select class="field" id="sndTenths"></select><span class="caret">›</span></div>
+      </div>
+      <div class="row">
+        <div class="rowhead"><span>Seconds sound</span></div>
+        <div class="selwrap"><select class="field" id="sndSeconds"></select><span class="caret">›</span></div>
+      </div>
+      <div class="row">
+        <div class="rowhead"><span>Minutes sound</span></div>
+        <div class="selwrap"><select class="field" id="sndMinutes"></select><span class="caret">›</span></div>
+      </div>
+      <div class="row">
+        <div class="rowhead"><span>Hours sound</span></div>
+        <div class="selwrap"><select class="field" id="sndHours"></select><span class="caret">›</span></div>
+      </div>
+      <div class="row">
+        <div class="rowhead"><span>Clear sound</span></div>
+        <div class="selwrap"><select class="field" id="sndDrop"></select><span class="caret">›</span></div>
+      </div>
+      <div class="row">
         <div class="rowhead"><span>Simulate time</span><span class="val" id="valTimeSet"></span></div>
         <input class="field" id="timeInput" type="text" placeholder="HH:MM:SS" autocomplete="off" spellcheck="false" />
       </div>
@@ -286,7 +317,7 @@
     // adjusted in the advanced panel is saved to localStorage under the active
     // aspect ratio, so tweaks survive refreshes without editing the file
     // bumping this retires previously saved tweaks so new file defaults take effect
-    const SETTINGS_V = 2;
+    const SETTINGS_V = 3;
     let SAVED = {};
     try { SAVED = JSON.parse(localStorage.getItem('gravityClockSettings') || '{}') || {}; } catch (e) { SAVED = {}; }
     if (SAVED.v !== SETTINGS_V) SAVED = { v: SETTINGS_V };
@@ -299,7 +330,7 @@
     };
     const ASPECT_DEFAULTS = {
       '16:9': { sizes: { tenths: 2.5, seconds: 9, minutes: 42.5, hours: 70, combo: 82, exact: 105 } },
-      '9:16': { sizes: { tenths: 1.5, seconds: 5, minutes: 20, hours: 45, combo: 45, exact: 60 } },
+      '9:16': { sizes: { tenths: 1.5, seconds: 5, minutes: 22.5, hours: 40, combo: 45, exact: 60 } },
       '1:1':  { sizes: { tenths: 1.5, seconds: 6, minutes: 30.5, hours: 60.5, combo: 68, exact: 91 } },
       '4:3':  { sizes: { tenths: 1.75, seconds: 7, minutes: 35, hours: 65, combo: 74, exact: 97.5 } },
       '3:4':  { sizes: { tenths: 1.5, seconds: 5, minutes: 25, hours: 53, combo: 47, exact: 60 } },
@@ -344,6 +375,7 @@
       SAVED.resolution = RESOLUTION;
       SAVED.gravity = GRAVITY;
       SAVED.canvasPad = CANVAS_PAD_PCT;
+      SAVED.sound = SOUND;
       try { localStorage.setItem('gravityClockSettings', JSON.stringify(SAVED)); } catch (e) {}
     }
 
@@ -363,6 +395,137 @@
     let CANVAS_PAD_PCT = SAVED.canvasPad !== undefined ? SAVED.canvasPad : 0;
     function canvasPadPx() { return height * (CANVAS_PAD_PCT / 100); }
 
+    // ---------- sound ----------
+    // These are synthesised approximations of the classic Mac alert sounds.
+    // The real ones are Apple system assets (/System/Library/Sounds) that
+    // cannot be bundled or fetched from a web page, so each name below is
+    // rebuilt from oscillators and filtered noise to evoke the original.
+    let audioCtx = null, masterGain = null, voices = 0, lastPlayAt = {};
+    const MAX_VOICES = 14;
+    let suppressSound = false;   // held while a pile is reconstructed off-screen
+
+    let SOUND = Object.assign(
+      { on: false, volume: 0.5, tenths: 'Tink', seconds: 'Pop',
+        minutes: 'Bottle', hours: 'Glass', drop: 'Submarine' },
+      SAVED.sound || {});
+
+    const UNIT_GAIN = { tenths: 0.22, seconds: 0.45, minutes: 0.8, hours: 1, drop: 1 };
+    const MIN_GAP_MS = { tenths: 70, seconds: 40, minutes: 0, hours: 0, drop: 0 };
+
+    function audio() {
+      if (!audioCtx) {
+        let AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        audioCtx = new AC();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = SOUND.volume;
+        masterGain.connect(audioCtx.destination);
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
+    }
+
+    // one enveloped oscillator; f1 sweeps the pitch, delay offsets multi-note runs
+    function osc(c, dest, type, f0, f1, dur, peak, attack, delay) {
+      let t = c.currentTime + (delay || 0);
+      let o = c.createOscillator();
+      o.type = type;
+      o.frequency.setValueAtTime(f0, t);
+      if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+      let g = c.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(peak, t + (attack || 0.004));
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(dest);
+      o.start(t); o.stop(t + dur + 0.03);
+    }
+
+    function noiseBurst(c, dest, dur, peak, type, freq, q, delay) {
+      let t = c.currentTime + (delay || 0);
+      let len = Math.max(1, Math.ceil(c.sampleRate * dur));
+      let buf = c.createBuffer(1, len, c.sampleRate);
+      let data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      let s = c.createBufferSource();
+      s.buffer = buf;
+      let f = c.createBiquadFilter();
+      f.type = type; f.frequency.value = freq; f.Q.value = q || 1;
+      let g = c.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(peak, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      s.connect(f); f.connect(g); g.connect(dest);
+      s.start(t); s.stop(t + dur + 0.03);
+    }
+
+    const SYNTH = {
+      Basso:     (c, d) => { osc(c, d, 'sawtooth', 110, 68, 0.34, 0.5); },
+      Blow:      (c, d) => { noiseBurst(c, d, 0.26, 0.5, 'bandpass', 760, 4); },
+      Bottle:    (c, d) => { osc(c, d, 'sine', 920, 320, 0.16, 0.5, 0.002);
+                             noiseBurst(c, d, 0.04, 0.18, 'highpass', 1800, 1); },
+      Frog:      (c, d) => { osc(c, d, 'square', 250, 175, 0.07, 0.3, 0.003);
+                             osc(c, d, 'square', 310, 205, 0.09, 0.3, 0.003, 0.08); },
+      Funk:      (c, d) => { osc(c, d, 'square', 330, 330, 0.09, 0.3);
+                             osc(c, d, 'square', 208, 208, 0.13, 0.3, 0.004, 0.1); },
+      Glass:     (c, d) => { osc(c, d, 'triangle', 1500, 1500, 0.5, 0.3);
+                             osc(c, d, 'triangle', 2250, 2250, 0.38, 0.16);
+                             osc(c, d, 'triangle', 3050, 3050, 0.26, 0.09); },
+      Hero:      (c, d) => { [523, 659, 784].forEach((f, i) =>
+                               osc(c, d, 'sine', f, f, 0.3, 0.3, 0.004, i * 0.07)); },
+      Morse:     (c, d) => { osc(c, d, 'square', 1000, 1000, 0.08, 0.26);
+                             osc(c, d, 'square', 1000, 1000, 0.08, 0.26, 0.004, 0.13); },
+      Ping:      (c, d) => { osc(c, d, 'sine', 880, 880, 0.45, 0.42);
+                             osc(c, d, 'sine', 1760, 1760, 0.18, 0.11); },
+      Pop:       (c, d) => { osc(c, d, 'sine', 520, 155, 0.09, 0.5, 0.002); },
+      Purr:      (c, d) => { osc(c, d, 'sine', 200, 168, 0.34, 0.4, 0.02);
+                             osc(c, d, 'sine', 100, 84, 0.34, 0.24, 0.02); },
+      Sosumi:    (c, d) => { osc(c, d, 'sine', 660, 660, 0.13, 0.4);
+                             osc(c, d, 'sine', 988, 988, 0.22, 0.4, 0.004, 0.12); },
+      Submarine: (c, d) => { osc(c, d, 'sine', 132, 118, 0.9, 0.5, 0.012);
+                             osc(c, d, 'sine', 66, 59, 0.9, 0.3, 0.012); },
+      Tink:      (c, d) => { osc(c, d, 'sine', 2300, 2050, 0.05, 0.3, 0.001); }
+    };
+    const SOUND_NAMES = ['None'].concat(Object.keys(SYNTH));
+
+    function playSound(name, scale) {
+      if (!name || name === 'None' || !SYNTH[name]) return;
+      if (voices > MAX_VOICES) return;
+      let c = audio();
+      if (!c) return;
+      let g = c.createGain();
+      g.gain.value = scale === undefined ? 1 : scale;
+      g.connect(masterGain);
+      SYNTH[name](c, g);
+      voices++;
+      setTimeout(function () { voices--; }, 950);
+    }
+
+    function playForUnit(unit) {
+      let key = (unit === 'combo' || unit === 'exact') ? 'hours' : unit;
+      let gap = MIN_GAP_MS[key] || 0;
+      let now = performance.now();
+      if (gap && lastPlayAt[key] && now - lastPlayAt[key] < gap) return;
+      lastPlayAt[key] = now;
+      playSound(SOUND[key], UNIT_GAIN[key]);
+    }
+
+    // first contact for a live piece is its landing; prebuilt pieces are marked
+    // landed up front so reconstructing a pile never makes a sound
+    function onCollide(evt) {
+      if (!SOUND.on || suppressSound) return;
+      let pairs = evt.pairs;
+      for (let i = 0; i < pairs.length; i++) {
+        impactSound(pairs[i].bodyA);
+        impactSound(pairs[i].bodyB);
+      }
+    }
+    function impactSound(b) {
+      let n = (b.parent || b).gcPiece;
+      if (!n || n.landed) return;
+      n.landed = true;
+      playForUnit(n.unit);
+    }
+
     // collision groups: the finished minute's pile falls through the floor and
     // past the new minute's pieces, which are caught by the floor right away
     const FILTER_LIVE = { group: 0, category: 0x0001, mask: 0x0005 };
@@ -376,8 +539,11 @@
       }
     }
 
+    // sizes are a share of the padded inner box, so raising canvas padding
+    // scales the numbers down with it instead of overflowing the margin
+    function innerH() { return Math.max(20, height - 2 * canvasPadPx()); }
     function unitSize(unit) {
-      return height * (UNIT_PCT[unit] / 100);
+      return innerH() * (UNIT_PCT[unit] / 100);
     }
 
     // Clock state, synced to the selected city's real time
@@ -940,6 +1106,8 @@
       // matter clamps static friction low by default, which lets contacts creep
       Matter.Resolver._frictionMaxStatic = 2;
 
+      Matter.Events.on(engine, 'collisionStart', onCollide);
+
       registerDecomp();
       updateCanvasSize();
       resetClock();
@@ -1002,12 +1170,14 @@
         while (simTick < target) {
           simTick++;
           let t = simTick % 10;
-          if (t === 0) {
-            simSecond = simTick / 10;
-            spawnForSecond(simSecond);
-          } else {
-            spawnNumber(t, 'tenths');
-          }
+          let n = (t === 0)
+            ? (simSecond = simTick / 10, spawnForSecond(simSecond))
+            : spawnNumber(t, 'tenths');
+          // a backlog (first frame after load, or returning to a background
+          // tab) would otherwise release every overdue piece from the same
+          // starting line. give each one the head start it would have built
+          // up, so they arrive as a cascade instead of a horizontal row
+          if (n) headStart(n, (target - simTick) * 100);
         }
       }
 
@@ -1030,9 +1200,23 @@
     function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
     function spawnForSecond(s, startY) {
-      if (s <= 0) return;
+      if (s <= 0) return null;
       let u = unitForSecond(s);
-      spawnNumber(u.value, u.unit, startY);
+      return spawnNumber(u.value, u.unit, startY);
+    }
+
+    // drop a late piece to where gravity would already have carried it, moving
+    // at the matching speed. Matter integrates in px per timestep, so the
+    // velocity is the per-ms figure scaled by the fixed step
+    function headStart(n, lateMs) {
+      if (!(lateMs > 0) || !n.body) return;
+      let t = Math.min(lateMs, 1500);
+      let a = world.gravity.y * 0.001;               // px per ms^2
+      let drop = Math.min(0.5 * a * t * t,
+                          Math.max(0, height - canvasPadPx() - n.size * 1.5));
+      if (drop <= 0) return;
+      Body.translate(n.body, { x: 0, y: drop });
+      Body.setVelocity(n.body, { x: 0, y: Math.min(a * t, height / 40) * PHYS_DT });
     }
 
     function spawnNumber(value, unit, startY) {
@@ -1090,6 +1274,7 @@
     // falls through the floor while the new minute's pieces (spawning the
     // whole time) are caught by the still-present floor
     function dropPile() {
+      if (SOUND.on) playSound(SOUND.drop, UNIT_GAIN.drop);
       for (let n of numbers) {
         setFilter(n.body, FILTER_OLD);
         if (n.frozen) {
@@ -1128,7 +1313,18 @@
 
       Composite.clear(world, false);
       createBoundaries();
+      suppressSound = true;
       prebuildPile(settleMs);
+      suppressSound = false;
+
+      // settling the reconstructed pile blocks for up to ~1s. re-read the clock
+      // afterwards so those elapsed ticks are not owed on the first frame and
+      // released together as one simultaneous row of tenths
+      let done = zoneTime();
+      if (done.h === simHour && done.m === simMinute) {
+        simSecond = done.s;
+        simTick = done.s * 10 + Math.floor(done.ms / 100);
+      }
     }
 
     // ---------- instant pile reconstruction ----------
@@ -1184,6 +1380,7 @@
 
       function place(value, unit) {
         let n = spawnNumber(value, unit);
+        n.landed = true;   // already at rest: never sounds an impact
         let glyph = n.glyph;
         let w0 = glyph.tightW * n.rasterScale;
         let h0 = glyph.tightH * n.rasterScale;
@@ -1443,6 +1640,8 @@
         }
 
         Body.setAngularVelocity(this.body, random(-0.06, 0.06));
+        this.landed = false;
+        this.body.gcPiece = this;   // so collisionStart can find the piece
         Composite.add(world, this.body);
       }
 
@@ -1668,6 +1867,50 @@
         persistSettings();
         scheduleReset();
       });
+
+      // ---- sound ----
+      let SND_KEYS = [['sndTenths', 'tenths'], ['sndSeconds', 'seconds'],
+                      ['sndMinutes', 'minutes'], ['sndHours', 'hours'], ['sndDrop', 'drop']];
+      for (let [id, key] of SND_KEYS) {
+        let sel = document.getElementById(id);
+        for (let nm of SOUND_NAMES) {
+          let o = document.createElement('option');
+          o.value = nm; o.textContent = nm;
+          sel.appendChild(o);
+        }
+        sel.value = SOUND[key] || 'None';
+        sel.addEventListener('change', function () {
+          SOUND[key] = sel.value;
+          persistSettings();
+          if (SOUND.on) playSound(sel.value, UNIT_GAIN[key]);   // audition the pick
+        });
+      }
+
+      let segSound = document.getElementById('segSound');
+      for (let b of segSound.querySelectorAll('button')) {
+        b.classList.toggle('on', (b.dataset.snd === 'on') === !!SOUND.on);
+      }
+      segSound.addEventListener('click', function (e) {
+        let b = e.target.closest('button');
+        if (!b) return;
+        SOUND.on = b.dataset.snd === 'on';
+        for (let x of segSound.querySelectorAll('button')) x.classList.toggle('on', x === b);
+        if (SOUND.on) playSound(SOUND.drop, UNIT_GAIN.drop);   // confirms audio is live
+        persistSettings();
+      });
+
+      let volSld = document.getElementById('sldVolume');
+      volSld.value = String(Math.round(SOUND.volume * 100));
+      document.getElementById('valVolume').textContent = Math.round(SOUND.volume * 100) + '%';
+      volSld.addEventListener('input', function () {
+        SOUND.volume = parseFloat(volSld.value) / 100;
+        document.getElementById('valVolume').textContent = volSld.value + '%';
+        if (masterGain) masterGain.gain.value = SOUND.volume;
+        persistSettings();
+      });
+
+      // browsers only allow audio to start from a gesture
+      window.addEventListener('pointerdown', function () { if (SOUND.on) audio(); }, { passive: true });
 
       let padSld = document.getElementById('sldCanvasPad');
       padSld.addEventListener('input', function () {
