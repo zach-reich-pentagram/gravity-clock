@@ -392,6 +392,7 @@
     // inset between the canvas edges and the floor/walls, as a % of canvas
     // height; the pile settles inside this margin instead of touching the
     // artboard border. tunable in the panel
+    const INK_SHRINK = 0.9;   // small units draw at 90% of their collision box
     let CANVAS_PAD_PCT = SAVED.canvasPad !== undefined ? SAVED.canvasPad : 0;
     function canvasPadPx() { return height * (CANVAS_PAD_PCT / 100); }
 
@@ -1652,6 +1653,9 @@
           };
         }
 
+        // big numbers keep their exact tuned size; the small units are drawn a
+        // touch inside their collision box so the pile stays legible
+        this.inkScale = isBigUnit ? 1 : INK_SHRINK;
         Body.setAngularVelocity(this.body, random(-0.06, 0.06));
         this.landed = false;
         this.body.gcPiece = this;   // so collisionStart can find the piece
@@ -1668,7 +1672,11 @@
         if (glyph.color !== inkColor()) renderGlyphTexture(glyph, inkColor());
         let pos = this.body.position;
         let angle = this.body.angle;
-        let s = this.rasterScale;
+        // the collision box is the glyph's ink bounds, so pieces settle touching
+        // ink to ink and small numbers read as one mashed string. drawing the
+        // small units fractionally inside their box leaves a gutter between
+        // neighbours without changing how the pile packs or how tall it grows
+        let s = this.rasterScale * this.inkScale;
 
         push();
         translate(pos.x, pos.y);
@@ -1676,8 +1684,8 @@
         // draw the raster directly; p5 transforms apply to the underlying 2d context
         drawingContext.drawImage(
           glyph.canvas,
-          this.imgOffset.x,
-          this.imgOffset.y,
+          this.imgOffset.x * this.inkScale,
+          this.imgOffset.y * this.inkScale,
           glyph.canvas.width * s,
           glyph.canvas.height * s
         );
