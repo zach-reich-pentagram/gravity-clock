@@ -118,10 +118,11 @@
   @media (max-width: 760px) {
     html, body { height: auto; overflow: visible; }
     body { overflow-x: hidden; }
-    /* canvas takes the leftover height and centres in it, so the controls and
-       credit sit flush at the bottom with no dead space after them */
-    .app { grid-template-rows: 1fr auto auto; height: auto; min-height: 100vh; }
-    #canvas-container { grid-row: 1; padding: 8px; }
+    /* rows shrink-wrap and the whole block centres, so the canvas-to-controls
+       gap and the controls-to-credit gap are both exactly the foot padding */
+    .app { grid-template-rows: auto auto auto; height: auto; min-height: 100vh;
+           align-content: center; }
+    #canvas-container { grid-row: 1; padding: 0 4px; }
 
     /* the advanced panel drops into the flow between canvas and controls */
     .advpanel { position: static; grid-row: 2; width: auto; max-height: none;
@@ -130,7 +131,8 @@
 
     /* controls, time and credit all line up with the canvas edges */
     .foot { grid-row: 3; grid-template-columns: 1fr 1fr; gap: 10px;
-            padding: 8px 0 10px; margin: 0 auto; width: 100%;
+            align-items: start;   /* both rows measure from the same line */
+            padding: 10px 0 0; margin: 0 auto; width: 100%;
             max-width: var(--canvasW, 100%); }
     .controls { grid-column: 1 / -1; grid-row: 1; justify-self: stretch;
                 display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -1254,11 +1256,13 @@
         // its ratio allows
         let footEl = document.querySelector('.foot');
         let advEl = document.getElementById('advPanel');
-        let chrome = 18;
+        let chrome = 24;   // the even top/bottom margin left around the block
         if (footEl) chrome += footEl.offsetHeight;
         if (advEl && advEl.style.display !== 'none') chrome += advEl.offsetHeight;
-        availW = Math.max(120, window.innerWidth - 16);
-        availH = Math.max(160, window.innerHeight - chrome);
+        availW = Math.max(120, window.innerWidth - 8);
+        // floored so opening the advanced panel scrolls the page rather than
+        // squeezing the artboard down to nothing
+        availH = Math.max(300, window.innerHeight - chrome);
       } else {
         availW = Math.max(200, (container ? container.clientWidth : windowWidth) - 36);
         availH = Math.max(200, (container ? container.clientHeight : windowHeight) - 36);
