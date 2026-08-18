@@ -132,9 +132,9 @@
     #btnExport, .readout, .credit { position: static; }
 
     /* the advanced panel drops into the flow between canvas and controls */
-    .advpanel { position: static; grid-row: 2; width: auto; max-height: none;
-                bottom: auto; overflow-y: visible; margin: 0 auto; padding: 4px 8px 0;
-                max-width: var(--canvasW, 100%); }
+    .advpanel { position: static; grid-row: 2; width: 100%; max-width: none;
+                max-height: none; bottom: auto; overflow-y: visible;
+                margin: 0; padding: 12px 14px 0; }
 
     /* controls, time and credit all line up with the canvas edges */
     .foot { grid-row: 3; grid-template-columns: 1fr 1fr; gap: 10px;
@@ -1522,10 +1522,8 @@
         // the container shrink-wraps on mobile, so the budget is the viewport
         // minus whatever the controls actually occupy
         let footEl = document.querySelector('.foot');
-        let advEl = document.getElementById('advPanel');
         let chrome = 24;   // the even top/bottom margin left around the block
         if (footEl) chrome += footEl.offsetHeight;
-        if (advEl && advEl.style.display !== 'none') chrome += advEl.offsetHeight;
         fit = fitBox(ratio, Math.max(120, window.innerWidth - 8),
                             Math.max(300, viewportH() - chrome));
       } else {
@@ -1787,22 +1785,42 @@
         // glyph textures repaint lazily on next display via the color check in getGlyph
       });
 
+      function toggleAdvanced() {
+        let panel = document.getElementById('advPanel');
+        let open = panel.style.display === 'none';
+        panel.style.display = open ? 'flex' : 'none';
+        // on a phone the panel lands below the artboard, so bring it into view
+        if (open && window.matchMedia('(max-width: 760px)').matches) {
+          setTimeout(function () { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 30);
+        }
+      }
+
       // hidden advanced panel: type "69" then Enter anywhere to toggle
       let keyBuffer = '';
       document.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') {
-          if (keyBuffer.endsWith('69')) {
-            let panel = document.getElementById('advPanel');
-            let open = panel.style.display === 'none';
-            panel.style.display = open ? 'flex' : 'none';
-            if (window.matchMedia('(max-width: 760px)').matches) {
-              updateCanvasSize();
-              scheduleReset();
-            }
-          }
+          if (keyBuffer.endsWith('69')) toggleAdvanced();
           keyBuffer = '';
         } else if (e.key.length === 1) {
           keyBuffer = (keyBuffer + e.key).slice(-8);
+        }
+      });
+
+      // there is no keyboard on a phone, so five quick taps on Dark does the
+      // same thing. the run resets if another control is used or the taps stall
+      const DARK_TAPS = 5, TAP_WINDOW_MS = 1600;
+      let darkTaps = 0, darkTapTimer = null;
+      document.getElementById('segMode').addEventListener('click', function (e) {
+        let b = e.target.closest('button');
+        if (!b) return;
+        if (b.dataset.mode !== 'dark') { darkTaps = 0; return; }   // Light breaks the run
+        darkTaps++;
+        clearTimeout(darkTapTimer);
+        darkTapTimer = setTimeout(function () { darkTaps = 0; }, TAP_WINDOW_MS);
+        if (darkTaps >= DARK_TAPS) {
+          darkTaps = 0;
+          clearTimeout(darkTapTimer);
+          toggleAdvanced();
         }
       });
 
