@@ -78,8 +78,12 @@
              display: flex; flex-direction: column; gap: 5px; padding: 8px;
              background: var(--paper); border: 1px solid var(--hair); border-radius: 14px;
              max-height: 44vh; overflow-y: auto; }
-  .chip { border: 1px solid var(--hair); background: var(--paper); border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { border: 1px solid var(--hair); background: var(--paper); color: var(--ink);
+          border-radius: 999px; padding: 5px 12px; cursor: pointer; }
   .chip:hover { background: var(--ink); color: var(--paper); }
+  .chip.on { background: var(--ink); color: var(--paper); }
+  .btn.small { padding: 5px 14px; }
 
   .credit { padding: 2px; color: var(--ink); text-decoration: none; }
   .credit:hover { text-decoration: underline; }
@@ -109,10 +113,13 @@
     body { overflow-x: hidden; }
     .app { grid-template-columns: 1fr; grid-template-rows: auto auto auto;
            height: auto; min-height: 100vh; }
-    .panelcol { grid-column: 1; grid-row: 1; overflow-y: visible; padding: 14px 14px 4px; }
-    #canvas-container { grid-column: 1; grid-row: 2; height: 78vh; padding: 14px; }
+    #canvas-container { grid-column: 1; grid-row: 1; height: 74vh; padding: 14px; }
+    .panelcol { grid-column: 1; grid-row: 2; overflow-y: visible; padding: 4px 14px 0; }
     .foot { grid-column: 1; grid-row: 3; }
-    #btnExport { position: static; }   /* joins the control stack on mobile */
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    #btnExport { position: static; }   /* joins the control grid on mobile */
+    /* controls sit at the foot of the page, so the city list opens upward */
+    .results { top: auto; bottom: calc(100% + 6px); width: max(100%, 210px); }
   }
 </style>
 </head>
@@ -147,6 +154,8 @@
 
       <section class="advpanel" id="advPanel" style="display:none">
         <div class="phead">Advanced</div>
+        <button class="btn small" id="btnPause">Pause</button>
+        <div class="chips" id="aspectChips"></div>
         <div class="row">
           <div class="rowhead"><span>Tenths</span><span class="val" id="valTenths">1%</span></div>
           <input type="range" id="sldTenths" min="0.25" max="6" step="0.25" value="1" />
@@ -239,6 +248,12 @@
     // keeps running forward from there
     let timeOffsetMs = 0;
 
+    // paused holds the clock (and the simulation) at one instant so sizing can
+    // be inspected; resuming carries on from the held moment
+    let paused = false;
+    let pausedAtMs = 0;
+    function nowMs() { return paused ? pausedAtMs : Date.now() + timeOffsetMs; }
+
     // sizing and tracking are kept PER ASPECT RATIO. defaults below; anything
     // adjusted in the advanced panel is saved to localStorage under the active
     // aspect ratio, so tweaks survive refreshes without editing the file
@@ -268,9 +283,17 @@
       }
     };
 
+    const IS_NARROW = window.matchMedia('(max-width: 760px)').matches;
+
+    // desktop opens horizontal, phones open vertical
+    (function () {
+      let el = document.getElementById('aspectRatioSelect');
+      if (el) el.value = IS_NARROW ? '9:16' : '16:9';
+    })();
+
     function currentAspect() {
       let el = document.getElementById('aspectRatioSelect');
-      return el ? el.value : '9:16';
+      return el ? el.value : (IS_NARROW ? '9:16' : '16:9');
     }
 
     function settingsForAspect(a) {
@@ -374,8 +397,8 @@
       }
       return fmtCache[tz];
     }
-    function zoneTime() {
-      let now = new Date(Date.now() + timeOffsetMs);
+    function zoneTime(atMs) {
+      let now = new Date(atMs !== undefined ? atMs : nowMs());
       let h = 0, m = 0, s = 0;
       try {
         let parts = zoneFmt(zone).formatToParts(now);
@@ -903,7 +926,7 @@
       // fixed-timestep accumulator; cap backlog so a background tab doesn't spiral.
       // the clamp is what makes a slow device fall behind and drift into slow
       // motion, so it is generous enough to stay real-time down to ~4fps
-      physAccumMs += Math.min(deltaTime, MAX_CATCHUP_MS);
+      physAccumMs += paused ? 0 : Math.min(deltaTime, MAX_CATCHUP_MS);
       let physSteps = 0;
       while (physAccumMs >= PHYS_DT && physSteps < MAX_STEPS) {
         Engine.update(engine, PHYS_DT);
@@ -926,6 +949,12 @@
       // advance the clock from the selected city's real time. the minute change
       // releases the old pile but never pauses spawning: the new minute's first
       // tenths fall from the top while the old pile is still falling away
+      if (paused) {
+        for (let n of droppingNumbers) n.display();
+        for (let n of numbers) n.display();
+        return;
+      }
+
       if (zt.h !== simHour || zt.m !== simMinute) {
         dropPile();
         simHour = zt.h;
@@ -1402,8 +1431,43 @@
       searchEl.addEventListener('focus', function () { renderResults(searchEl.value); });
       searchEl.value = cityName;
 
-      document.getElementById('aspectRatioSelect').addEventListener('change', function () {
+      let aspectSel = document.getElementById('aspectRatioSelect');
+      let chipWrap = document.getElementById('aspectChips');
+      for (let opt of aspectSel.options) {
+        let b = document.createElement('button');
+        b.className = 'chip' + (opt.value === aspectSel.value ? ' on' : '');
+        b.textContent = opt.value;
+        b.dataset.aspect = opt.value;
+        b.addEventListener('click', function () {
+          if (aspectSel.value === opt.value) return;
+          aspectSel.value = opt.value;
+          aspectSel.dispatchEvent(new Event('change'));
+        });
+        chipWrap.appendChild(b);
+      }
+      function syncAspectChips() {
+        for (let b of chipWrap.children) b.classList.toggle('on', b.dataset.aspect === aspectSel.value);
+      }
+
+      // pause holds the clock and the simulation; resuming continues from there
+      let pauseBtn = document.getElementById('btnPause');
+      pauseBtn.addEventListener('click', function () {
+        if (paused) {
+          timeOffsetMs = pausedAtMs - Date.now();   // carry on from the held moment
+          paused = false;
+          pauseBtn.textContent = 'Pause';
+          pauseBtn.classList.remove('on');
+        } else {
+          pausedAtMs = Date.now() + timeOffsetMs;
+          paused = true;
+          pauseBtn.textContent = 'Play';
+          pauseBtn.classList.add('on');
+        }
+      });
+
+      aspectSel.addEventListener('change', function () {
         applyAspectSettings();   // each aspect ratio carries its own sizing/tracking
+        syncAspectChips();
         syncSliders();
         glyphCache = {};
         updateCanvasSize();
@@ -1526,6 +1590,7 @@
         let raw = timeInput.value.trim();
         if (!raw) {
           timeOffsetMs = 0;
+          if (paused) pausedAtMs = Date.now();
           timeNote.textContent = 'live';
           if (started) resetClock();
           return;
@@ -1534,11 +1599,11 @@
         if (!m) { timeNote.textContent = 'HH:MM:SS'; return; }
         let h = +m[1], mi = +m[2], s = m[3] ? +m[3] : 0, t = m[4] ? +m[4] : 0;
         if (h > 23 || mi > 59 || s > 59) { timeNote.textContent = 'out of range'; return; }
-        timeOffsetMs = 0;                       // measure against true zone time
-        let now = zoneTime();
+        let now = zoneTime(Date.now());         // measure against true zone time
         let cur = ((now.h * 60 + now.m) * 60 + now.s) * 1000 + now.ms;
         let want = ((h * 60 + mi) * 60 + s) * 1000 + t * 100;
         timeOffsetMs = (want - cur + 86400000) % 86400000;
+        if (paused) pausedAtMs = Date.now() + timeOffsetMs;
         timeNote.textContent = 'set';
         if (started) resetClock();
       });
