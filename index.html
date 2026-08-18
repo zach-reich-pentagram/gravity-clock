@@ -317,7 +317,7 @@
     // adjusted in the advanced panel is saved to localStorage under the active
     // aspect ratio, so tweaks survive refreshes without editing the file
     // bumping this retires previously saved tweaks so new file defaults take effect
-    const SETTINGS_V = 3;
+    const SETTINGS_V = 4;
     let SAVED = {};
     try { SAVED = JSON.parse(localStorage.getItem('gravityClockSettings') || '{}') || {}; } catch (e) { SAVED = {}; }
     if (SAVED.v !== SETTINGS_V) SAVED = { v: SETTINGS_V };
