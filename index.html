@@ -210,6 +210,10 @@
         <input type="range" id="sldRes" min="1" max="3" step="0.5" value="2" />
       </div>
       <div class="row">
+        <div class="rowhead"><span>Canvas padding</span><span class="val" id="valCanvasPad">0%</span></div>
+        <input type="range" id="sldCanvasPad" min="0" max="15" step="0.5" value="0" />
+      </div>
+      <div class="row">
         <div class="rowhead"><span>Simulate time</span><span class="val" id="valTimeSet"></span></div>
         <input class="field" id="timeInput" type="text" placeholder="HH:MM:SS" autocomplete="off" spellcheck="false" />
       </div>
@@ -339,6 +343,7 @@
       SAVED.aspects[currentAspect()] = { sizes: UNIT_PCT, tracking: TRACKING };
       SAVED.resolution = RESOLUTION;
       SAVED.gravity = GRAVITY;
+      SAVED.canvasPad = CANVAS_PAD_PCT;
       try { localStorage.setItem('gravityClockSettings', JSON.stringify(SAVED)); } catch (e) {}
     }
 
@@ -351,6 +356,12 @@
     // render density: canvas device pixels per css pixel. tunable in the panel
     let RESOLUTION = SAVED.resolution || Math.min(window.devicePixelRatio || 1, 2);
     if (SAVED.gravity !== undefined) GRAVITY = SAVED.gravity;
+
+    // inset between the canvas edges and the floor/walls, as a % of canvas
+    // height; the pile settles inside this margin instead of touching the
+    // artboard border. tunable in the panel
+    let CANVAS_PAD_PCT = SAVED.canvasPad !== undefined ? SAVED.canvasPad : 0;
+    function canvasPadPx() { return height * (CANVAS_PAD_PCT / 100); }
 
     // collision groups: the finished minute's pile falls through the floor and
     // past the new minute's pieces, which are caught by the floor right away
@@ -1034,22 +1045,25 @@
       if (floorBody) Composite.remove(world, floorBody);
 
       let staticFilter = { group: 0, category: FILTER_STATIC.category, mask: FILTER_STATIC.mask };
+      let pad = canvasPadPx();
 
-      floorBody = Bodies.rectangle(width / 2, height + 25, width * 2, 50, {
+      // inset by pad so the pile settles with a visual margin from the
+      // artboard border instead of touching it edge to edge
+      floorBody = Bodies.rectangle(width / 2, height - pad + 25, width * 2, 50, {
         isStatic: true,
         restitution: BOUNCE,
         friction: 0.5,
         collisionFilter: staticFilter
       });
 
-      wallLeft = Bodies.rectangle(-25, height / 2, 50, height * 2, {
+      wallLeft = Bodies.rectangle(pad - 25, height / 2, 50, height * 2, {
         isStatic: true,
         friction: 0,
         restitution: 0.2,
         collisionFilter: staticFilter
       });
 
-      wallRight = Bodies.rectangle(width + 25, height / 2, 50, height * 2, {
+      wallRight = Bodies.rectangle(width - pad + 25, height / 2, 50, height * 2, {
         isStatic: true,
         friction: 0,
         restitution: 0.2,
@@ -1133,11 +1147,16 @@
 
     function prebuildPile(settleMs) {
       const colW = 4;
-      let cols = new Array(Math.max(1, Math.ceil(width / colW))).fill(0);
+      let PADX = canvasPadPx();
+      let innerW = Math.max(20, width - 2 * PADX);
+      let cols = new Array(Math.max(1, Math.ceil(innerW / colW))).fill(0);
 
-      function landingFor(x, bw) {
-        let c0 = Math.max(0, Math.floor(x / colW));
-        let c1 = Math.min(cols.length - 1, Math.ceil((x + bw) / colW) - 1);
+      // column index/x conversions are relative to the padded left edge, so the
+      // reconstructed pile never needs a large lateral correction once the
+      // physics walls (also inset by PADX) take over during settlePile()
+      function landingFor(xInner, bw) {
+        let c0 = Math.max(0, Math.floor(xInner / colW));
+        let c1 = Math.min(cols.length - 1, Math.ceil((xInner + bw) / colW) - 1);
         let hmax = 0;
         for (let i = c0; i <= c1; i++) if (cols[i] > hmax) hmax = cols[i];
         return hmax;
@@ -1172,16 +1191,19 @@
         let ang = isBig ? random(-0.1, 0.1) : random(-0.25, 0.25);
         let bw = Math.abs(Math.cos(ang)) * w0 + Math.abs(Math.sin(ang)) * h0;
         let bh = Math.abs(Math.sin(ang)) * w0 + Math.abs(Math.cos(ang)) * h0;
-        bw = Math.min(bw, width - 2);
+        bw = Math.min(bw, innerW - 2);
 
-        // sample candidate spots and take the lowest, so the pile packs level-ish
-        let bestX = 1, bestH = Infinity;
+        // sample candidate spots and take the lowest, so the pile packs level-ish.
+        // xInner is relative to the padded left edge; bestX converts back to
+        // absolute canvas coordinates for the body position
+        let xInner = 1, bestH = Infinity;
         for (let k = 0; k < 18; k++) {
-          let x = random(1, Math.max(2, width - bw - 1));
+          let x = random(1, Math.max(2, innerW - bw - 1));
           let hm = landingFor(x, bw);
-          if (hm < bestH || (hm === bestH && Math.random() < 0.5)) { bestH = hm; bestX = x; }
+          if (hm < bestH || (hm === bestH && Math.random() < 0.5)) { bestH = hm; xInner = x; }
         }
-        let topY = height - bestH - bh;
+        let bestX = PADX + xInner;
+        let topY = height - PADX - bestH - bh;
 
         // pieces stay dynamic: on the first frames real physics compacts the
         // placed stack so numbers interlock tightly instead of resting on each
@@ -1191,20 +1213,20 @@
         Body.setVelocity(n.body, { x: 0, y: 0 });
         Body.setAngularVelocity(n.body, 0);
 
-        let c0 = Math.max(0, Math.floor(bestX / colW));
-        let c1 = Math.min(cols.length - 1, Math.ceil((bestX + bw) / colW) - 1);
+        let c0 = Math.max(0, Math.floor(xInner / colW));
+        let c1 = Math.min(cols.length - 1, Math.ceil((xInner + bw) / colW) - 1);
         if (isBig) {
           // heightfield follows the glyph's ink contour (rotation here is small)
           let prof = getTopProfile(glyph);
           for (let i = c0; i <= c1; i++) {
-            let tx = (i * colW + colW / 2 - bestX) / n.rasterScale;
+            let tx = (i * colW + colW / 2 - xInner) / n.rasterScale;
             let idx = Math.round(tx / 4);
             let pv = (idx >= 0 && idx < prof.length) ? prof[idx] : glyph.tightH;
-            let hNew = Math.min(height, height - (topY + pv * n.rasterScale));
+            let hNew = Math.min(height - PADX, height - PADX - (topY + pv * n.rasterScale));
             if (hNew > cols[i]) cols[i] = hNew;
           }
         } else {
-          let hNew = Math.min(height, height - topY);
+          let hNew = Math.min(height - PADX, height - PADX - topY);
           for (let i = c0; i <= c1; i++) if (hNew > cols[i]) cols[i] = hNew;
         }
       }
@@ -1383,7 +1405,8 @@
         if (isConcaveUnit && glyph.contours.length > 0) {
           try {
             let sets = glyph.contours.map(c => c.map(p => ({ x: p.x * s, y: p.y * s })));
-            let spawnX = random(size, Math.max(size + 1, width - size));
+            let pad = canvasPadPx();
+            let spawnX = random(pad + size, Math.max(pad + size + 1, width - pad - size));
             let result = compoundFromContours(sets, spawnX, initialY, options);
 
             if (result) {
@@ -1409,7 +1432,8 @@
           let h = glyph.tightH * s;
           this.w = w;
           this.h = h;
-          let spawnX = random(w / 2, Math.max(w / 2 + 1, width - w / 2));
+          let pad = canvasPadPx();
+          let spawnX = random(pad + w / 2, Math.max(pad + w / 2 + 1, width - pad - w / 2));
           this.body = Bodies.rectangle(spawnX, initialY, w, h, options);
           // tight box is inset by pad on all sides of the raster
           this.imgOffset = {
@@ -1599,6 +1623,8 @@
         document.getElementById('valRes').textContent = RESOLUTION + 'x';
         document.getElementById('sldGravity').value = String(GRAVITY);
         document.getElementById('valGravity').textContent = String(GRAVITY);
+        document.getElementById('sldCanvasPad').value = String(CANVAS_PAD_PCT);
+        document.getElementById('valCanvasPad').textContent = CANVAS_PAD_PCT + '%';
       };
 
       for (let [id, valId, unit] of SIZE_SLIDERS) {
@@ -1639,6 +1665,14 @@
         document.getElementById('valRes').textContent = RESOLUTION + 'x';
         pixelDensity(RESOLUTION);
         glyphCache = {}; // big-piece raster tiers depend on density
+        persistSettings();
+        scheduleReset();
+      });
+
+      let padSld = document.getElementById('sldCanvasPad');
+      padSld.addEventListener('input', function () {
+        CANVAS_PAD_PCT = parseFloat(padSld.value);
+        document.getElementById('valCanvasPad').textContent = padSld.value + '%';
         persistSettings();
         scheduleReset();
       });
