@@ -45,25 +45,24 @@
   ::selection { background: var(--ink); color: var(--paper); }
 
   /* ---------- shell ---------- */
-  .app { position: relative; height: 100vh; }
-  #canvas-container { position: absolute; }
-  .readout { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
-  .credit { white-space: nowrap; }
-  .controls { display: flex; gap: 10px; }
+  /* canvas takes the whole window; one row underneath holds the live time,
+     every control, and the credit, so the artboard opens as large as possible */
+  .app { display: grid; grid-template-rows: 1fr auto; height: 100vh; }
+  #canvas-container { grid-row: 1; }
+  .foot { grid-row: 2; display: grid; grid-template-columns: 1fr auto 1fr;
+          align-items: end; gap: 16px; padding: 12px 14px; }
+  .readout { font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
+             justify-self: start; padding-bottom: 9px; }
+  .credit { justify-self: end; padding-bottom: 9px; white-space: nowrap; }
+
+  .controls { justify-self: center; display: flex; align-items: center; gap: 10px; }
+  .controls .field { width: auto; }
   .controls .seg button, .controls .btn { padding: 8px 18px; }
+  #citySearch { width: 180px; }
 
   @media (min-width: 761px) {
-    /* the four corners sit on one margin and the canvas takes the largest
-       rectangle left over, sized in updateCanvasSize() */
-    .foot { display: contents; }
-    .controls { position: absolute; top: var(--pad); left: var(--pad);
-                flex-direction: column; width: 250px; }
-    .controls .field { width: 100%; }
-    #btnExport { position: fixed; top: var(--pad); right: var(--pad); }
-    .readout { position: absolute; bottom: var(--pad); left: var(--pad); }
-    .credit { position: absolute; bottom: var(--pad); right: var(--pad); }
-    .advpanel { position: absolute; left: var(--pad); width: 250px;
-                bottom: calc(var(--pad) + 26px); overflow-y: auto; }
+    .advpanel { position: fixed; left: var(--pad); bottom: 62px; width: 250px;
+                max-height: calc(100vh - 86px); overflow-y: auto; }
   }
 
   /* ---------- panels ---------- */
@@ -147,7 +146,7 @@
     .controls .field { width: 100%; }
     #citySearch { width: 100%; }
     .readout { grid-column: 1; grid-row: 2; padding-bottom: 0; }
-    .credit { grid-column: 2; grid-row: 2; padding-bottom: 0; }
+    .credit { grid-column: 2; grid-row: 2; padding-bottom: 0; text-align: right; }
     /* the controls sit at the foot of the page, so the city list opens upward */
     .results { top: auto; bottom: calc(100% + 6px); }
   }
@@ -1281,6 +1280,11 @@
       let ratio = parseInt(parts[0], 10) / parseInt(parts[1], 10);
       let fit;
 
+      // the corner-positioning styles only apply on mobile now; clear any
+      // leftover inline sizing so the desktop grid box controls the container
+      container.style.left = container.style.top = '';
+      container.style.width = container.style.height = '';
+
       if (narrow) {
         // the container shrink-wraps on mobile, so the budget is the viewport
         // minus whatever the controls actually occupy
@@ -1291,43 +1295,11 @@
         if (advEl && advEl.style.display !== 'none') chrome += advEl.offsetHeight;
         fit = fitBox(ratio, Math.max(120, window.innerWidth - 8),
                             Math.max(300, viewportH() - chrome));
-        container.style.left = container.style.top = '';
-        container.style.width = container.style.height = '';
       } else {
-        // the corners are pinned at one margin; take whichever leftover
-        // rectangle holds the bigger artboard — the full-width band between the
-        // top and bottom rows, or the full-height band between left and right
-        let PAD = 14, GAP = 14;
-        let W = window.innerWidth, H = window.innerHeight;
-        let sz = sel => {
-          let el = document.querySelector(sel);
-          let r = el ? el.getBoundingClientRect() : null;
-          return r ? { w: r.width, h: r.height } : { w: 0, h: 0 };
-        };
-        let ctl = sz('.controls'), exp = sz('#btnExport');
-        let tm = sz('#readout'), cr = sz('.credit');
-        let topH = Math.max(ctl.h, exp.h), botH = Math.max(tm.h, cr.h);
-        let leftW = Math.max(ctl.w, tm.w), rightW = Math.max(exp.w, cr.w);
-
-        let aL = PAD, aT = PAD + topH + GAP;
-        let aW = W - 2 * PAD, aH = H - 2 * PAD - topH - botH - 2 * GAP;
-        let bL = PAD + leftW + GAP, bT = PAD;
-        let bW = W - 2 * PAD - leftW - rightW - 2 * GAP, bH = H - 2 * PAD;
-
-        let a = fitBox(ratio, Math.max(80, aW), Math.max(80, aH));
-        let b = (bW > 80 && bH > 80) ? fitBox(ratio, bW, bH) : { area: -1 };
-        let use = b.area > a.area
-          ? { fit: b, L: bL, T: bT, W: bW, H: bH }
-          : { fit: a, L: aL, T: aT, W: aW, H: aH };
-
-        fit = use.fit;
-        container.style.left = use.L + 'px';
-        container.style.top = use.T + 'px';
-        container.style.width = use.W + 'px';
-        container.style.height = use.H + 'px';
-
-        let adv = document.getElementById('advPanel');
-        if (adv) adv.style.top = (PAD + ctl.h + 10) + 'px';   // hangs under the controls
+        // the grid row above the bottom controls holds the whole budget
+        let availW = Math.max(200, container.clientWidth - 36);
+        let availH = Math.max(200, container.clientHeight - 36);
+        fit = fitBox(ratio, availW, availH);
       }
 
       let w = Math.floor(fit.w / 2) * 2;
