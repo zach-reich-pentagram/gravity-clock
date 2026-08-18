@@ -404,10 +404,15 @@
     const MAX_VOICES = 14;
     let suppressSound = false;   // held while a pile is reconstructed off-screen
 
-    let SOUND = Object.assign(
-      { on: false, volume: 0.5, tenths: 'Tink', seconds: 'Pop',
-        minutes: 'Bottle', hours: 'Glass', drop: 'Submarine' },
-      SAVED.sound || {});
+    // versioned on its own so refreshed sound defaults reach existing visitors
+    // without discarding the sizing and tracking they have tuned per ratio
+    const SOUND_V = 1;
+    const SOUND_DEFAULTS = { v: SOUND_V, on: true, volume: 0.5, tenths: 'Hero',
+                             seconds: 'Purr', minutes: 'Submarine',
+                             hours: 'Submarine', drop: 'Sosumi' };
+    let SOUND = (SAVED.sound && SAVED.sound.v === SOUND_V)
+      ? Object.assign({}, SOUND_DEFAULTS, SAVED.sound)
+      : Object.assign({}, SOUND_DEFAULTS);
 
     const UNIT_GAIN = { tenths: 0.22, seconds: 0.45, minutes: 0.8, hours: 1, drop: 1 };
     const MIN_GAP_MS = { tenths: 70, seconds: 40, minutes: 0, hours: 0, drop: 0 };
@@ -515,13 +520,21 @@
       if (!SOUND.on || suppressSound) return;
       let pairs = evt.pairs;
       for (let i = 0; i < pairs.length; i++) {
-        impactSound(pairs[i].bodyA);
-        impactSound(pairs[i].bodyB);
+        impactSound(pairs[i].bodyA, pairs[i].bodyB);
+        impactSound(pairs[i].bodyB, pairs[i].bodyA);
       }
     }
-    function impactSound(b) {
-      let n = (b.parent || b).gcPiece;
+    function impactSound(self, other) {
+      let n = (self.parent || self).gcPiece;
       if (!n || n.landed) return;
+      let o = other.parent || other;
+      // a big number sweeps a lot of air on the way down and will brush pieces
+      // that are still falling long before it arrives. only the floor or
+      // something already at rest counts as landing; the side walls never do
+      if (o === wallLeft || o === wallRight) return;
+      let om = o.gcPiece;
+      if (om && !om.frozen && !om.landed) return;
+      if (n.body.velocity.y < 0.5) return;   // must still be coming down
       n.landed = true;
       playForUnit(n.unit);
     }
